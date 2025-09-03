@@ -34,3 +34,7 @@ htmlcov/
 
 # Uploaded files or static assets that are not part of the source code
 /static/uploads/
+
+# Jupyter notebooks for dataset exploration (if any)
+/notebooks/
+*.ipynb

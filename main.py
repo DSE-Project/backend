@@ -1,7 +1,7 @@
 # In main.py
 
 from fastapi import FastAPI
-from api import forecast
+from api.v1 import forecast
 
 # Create the FastAPI app instance
 app = FastAPI(
