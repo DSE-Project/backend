@@ -21,6 +21,7 @@ HISTORICAL_DATA_PATH = "data/historical_data_1m.csv"
 model_1m = None
 scaler_1m = None
 historical_data_1m = None
+_service_initialized = False
 
 def focal_loss(gamma=2., alpha=0.25):
     """Focal loss function for the model"""
@@ -166,8 +167,36 @@ def preprocess_features_1m(features: InputFeatures1M, lookback_points=120) -> tu
         print(f"Error in preprocessing: {str(e)}")
         raise RuntimeError(f"Preprocessing failed: {e}")
 
+def initialize_1m_service():
+    """Initialize the 1-month forecasting service"""
+    global _service_initialized
+    
+    # Return True if already initialized
+    if _service_initialized:
+        return True
+    
+    print("🚀 Initializing 1M forecasting service...")
+    
+    model_loaded = load_model_1m()
+    scaler_loaded = load_scaler_1m()
+    data_loaded = load_historical_data_1m()
+    
+    if model_loaded and scaler_loaded and data_loaded:
+        print("✅ 1M service initialized successfully")
+        _service_initialized = True
+        return True
+    else:
+        print("❌ 1M service initialization failed")
+        _service_initialized = False
+        return False
+
 def predict_1m(features: InputFeatures1M, seq_length=60, threshold=0.8) -> ForecastResponse1M:
     """Make 1-month recession probability prediction"""
+    # Auto-initialize if not done
+    if not _service_initialized:
+        if not initialize_1m_service():
+            raise RuntimeError("Failed to initialize 1M forecasting service")
+    
     if model_1m is None or scaler_1m is None:
         raise RuntimeError("1M model or scaler is not loaded")
     
@@ -222,21 +251,6 @@ def get_model_info_1m() -> ModelStatus1M:
         historical_data_available=historical_data_1m is not None,
         total_features=len(historical_data_1m.columns) if historical_data_1m is not None else 0
     )
-
-def initialize_1m_service():
-    """Initialize the 1-month forecasting service"""
-    print("🚀 Initializing 1M forecasting service...")
-    
-    model_loaded = load_model_1m()
-    scaler_loaded = load_scaler_1m()
-    data_loaded = load_historical_data_1m()
-    
-    if model_loaded and scaler_loaded and data_loaded:
-        print("✅ 1M service initialized successfully")
-        return True
-    else:
-        print("❌ 1M service initialization failed")
-        return False
 
 def test_prediction_1m():
     """Test function to verify the service works"""
