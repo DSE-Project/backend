@@ -15,35 +15,68 @@ A FastAPI-based REST API for predicting US recession probabilities using machine
 ### Prerequisites
 
 - Python 3.8 or higher
-- pip package manager
+- uv package manager
 
 ### Setup
 
-1. **Clone the repository** (if not already done):
+1. **Install uv** (if not already installed):
+   
+   **Windows:**
+   ```bash
+   # Using PowerShell
+   powershell -c "irm https://astral.sh/uv/install.ps1 | iex"
+   
+   # Or using pip
+   pip install uv
+   ```
+   
+   **macOS:**
+   ```bash
+   # Using Homebrew
+   brew install uv
+   
+   # Or using curl
+   curl -LsSf https://astral.sh/uv/install.sh | sh
+   ```
+   
+   **Linux:**
+   ```bash
+   curl -LsSf https://astral.sh/uv/install.sh | sh
+   ```
+
+2. **Clone the repository** (if not already done):
    ```bash
    cd backend
    ```
 
-2. **Create a virtual environment** (recommended):
+3. **Create and activate a virtual environment with dependencies**:
    ```bash
-   python -m venv venv
+   uv sync
    ```
+   
+   This command will automatically:
+   - Create a virtual environment
+   - Install all dependencies from `uv.lock`
+   - Activate the environment
 
-3. **Activate the virtual environment**:
+   Alternatively, you can manually create and activate a virtual environment:
+   ```bash
+   uv venv
+   ```
    
    **Windows:**
    ```bash
-   venv\Scripts\activate
+   .venv\Scripts\activate
    ```
    
    **macOS/Linux:**
    ```bash
-   source venv/bin/activate
+   source .venv/bin/activate
    ```
 
-4. **Install dependencies**:
+4. **Install dependencies** (if not using `uv sync`):
    ```bash
-   pip install -r requirements.txt
+   uv pip install -r requirements.txt
    ```
 
 ## Running the Server
@@ -53,7 +86,7 @@ A FastAPI-based REST API for predicting US recession probabilities using machine
 To run the server in development mode with auto-reload:
 
 ```bash
-fastapi dev main.py
+uv run fastapi dev main.py
 ```
 
 The server will start on `http://localhost:8000`
@@ -63,13 +96,13 @@ The server will start on `http://localhost:8000`
 To run the server in production mode:
 
 ```bash
-python main.py
+uv run python main.py
 ```
 
 Or using uvicorn directly:
 
 ```bash
-uvicorn main:app --host 0.0.0.0 --port 8000
+uv run uvicorn main:app --host 0.0.0.0 --port 8000
 ```
 
 ## API Documentation
@@ -99,6 +132,8 @@ Once the server is running, you can access:
 backend/
 ├── main.py                 # FastAPI application entry point
 ├── requirements.txt        # Python dependencies
+├── pyproject.toml          # Project configuration for uv
+├── uv.lock                 # Locked dependency versions
 ├── api/
 │   └── v1/
 │       └── forecast.py     # API route definitions
@@ -133,7 +168,7 @@ You can configure the following environment variables:
 ### Common Issues
 
 1. **Module Import Errors**: Make sure you're running commands from the `backend` directory
-2. **Missing Dependencies**: Run `pip install -r requirements.txt` again
+2. **Missing Dependencies**: Run `uv sync` or `uv pip install -r requirements.txt` again
 3. **Port Already in Use**: Change the port in `main.py` or kill the process using port 8000
 
 ### Model Loading Issues
@@ -142,6 +177,23 @@ If you encounter model loading errors:
 - Ensure model files exist in the `ml_models/` directory
 - Check that model files are in the correct format (.keras)
 - Verify TensorFlow compatibility
+
+## Package Management with uv
+
+This project uses [uv](https://github.com/astral-sh/uv) as the package manager for faster and more reliable dependency management. Key benefits:
+
+- **Speed**: 10-100x faster than pip for installation and resolution
+- **Reliability**: Deterministic dependency resolution with lock files
+- **Compatibility**: Drop-in replacement for pip with additional features
+
+### Common uv Commands
+
+- `uv sync` - Install dependencies from lock file (recommended)
+- `uv add <package>` - Add a new dependency
+- `uv remove <package>` - Remove a dependency
+- `uv pip install <package>` - Install packages (pip-compatible)
+- `uv run <command>` - Run commands in the virtual environment
+- `uv lock` - Update the lock file with current dependencies
 
 ## Contributing
 
