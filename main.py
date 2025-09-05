@@ -53,9 +53,18 @@ async def startup_event():
     """Initialize services on startup"""
     try:
         # Import here to avoid circular imports
-        from services.forecast_orchestrator import initialize_all_services
-        initialize_all_services()
-        print("✅ All forecasting services initialized successfully")
+        from services.forecast_service_1m import initialize_1m_service
+        
+        print("🚀 Initializing forecasting services...")
+        
+        # Initialize 1M service
+        if initialize_1m_service():
+            print("✅ 1M forecasting service initialized successfully")
+        else:
+            print("⚠️ Warning: 1M forecasting service failed to initialize")
+        
+        # TODO: Initialize 3M and 6M services when ready
+        
     except Exception as e:
         print(f"⚠️ Warning: Could not initialize some services: {e}")
 
