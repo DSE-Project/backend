@@ -16,13 +16,15 @@ app = FastAPI(
 )
 
 # Add CORS middleware for frontend integration
+# Add CORS middleware for frontend integration
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Configure this properly for production
+    allow_origins=["http://localhost:5173"],  # No trailing slash
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
 
 # Include the forecast router
 app.include_router(forecast.router, prefix="/api/v1/forecast", tags=["Forecasting"])
@@ -38,7 +40,8 @@ async def read_root():
             "all_predictions": "/api/v1/forecast/predict/all",
             "1m_prediction": "/api/v1/forecast/predict/1m",
             "3m_prediction": "/api/v1/forecast/predict/3m", 
-            "6m_prediction": "/api/v1/forecast/predict/6m"
+            "6m_prediction": "/api/v1/forecast/predict/6m",
+            "simulate_1m": "/api/v1/forecast/simulate/1m"
         }
     }
 
