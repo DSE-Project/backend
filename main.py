@@ -54,8 +54,11 @@ async def startup_event():
     try:
         # Import here to avoid circular imports
         from services.forecast_service_1m import initialize_1m_service
+        from services.forecast_service_3m import initialize_3m_service
+        from services.forecast_service_6m import initialize_6m_service
+
         
-        print("🚀 Initializing forecasting services...")
+        print("\n🚀 Initializing forecasting services...")
         
         # Initialize 1M service
         if initialize_1m_service():
@@ -63,8 +66,18 @@ async def startup_event():
         else:
             print("⚠️ Warning: 1M forecasting service failed to initialize")
         
-        # TODO: Initialize 3M and 6M services when ready
         
+        if initialize_3m_service():
+            print("✅ 3M forecasting service initialized successfully")
+        else:
+            print("⚠️ 3M forecasting service failed to initialize")
+        
+        if initialize_6m_service():
+            print("✅ 6M forecasting service initialized successfully")
+        else:
+            print("⚠️ 6M forecasting service failed to initialize")
+        
+
     except Exception as e:
         print(f"⚠️ Warning: Could not initialize some services: {e}")
 
