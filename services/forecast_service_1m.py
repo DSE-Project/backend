@@ -286,7 +286,9 @@ def test_prediction_1m():
         SECURITYBANK=-2.0,
         PPIACO=270,
         M1SL=20000,
-        M2SL=150,
+
+        M2SL=150000,
+
         recession=0
     )
     
@@ -318,6 +320,7 @@ if __name__ == "__main__":
     print("Testing 1M forecasting service...")
     
     # Initialize service
+
     # if initialize_1m_service():
     #     # Run test prediction
     #     test_prediction_1m()
@@ -325,5 +328,15 @@ if __name__ == "__main__":
     #     print("Service initialization failed - cannot run test")
     
     # Test model info
+ 
+
+    if initialize_1m_service():
+        # Run test prediction
+        test_prediction_1m()
+    else:
+        print("Service initialization failed - cannot run test")
+    
+    # Test model info
     info = get_model_info_1m()
     print(f"📊 Model info: {info}")
+

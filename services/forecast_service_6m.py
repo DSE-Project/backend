@@ -1,4 +1,3 @@
-
 import sys
 import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -102,10 +101,12 @@ def preprocess_features_6m(features: InputFeatures6M, lookback_points=120) -> tu
         
         df = pd.concat([historical_data, current_month_df], copy=False)
 
+
         #print("Current month df columns:", current_month_df.columns)
         #print("Historical data columns:", historical_data.columns)
         #print("Final df shape after concat:", df.shape)
         #print("Tail of df:", df.tail(3))
+
 
         # Final processing
         df = df.dropna()
@@ -270,4 +271,4 @@ if __name__ == "__main__":
     
     # Test model info
     info = get_model_info_6m()
-    print(f"📊 Model info: {info}")
+
