@@ -6,6 +6,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from api.v1 import forecast
 from api.v1.yearly_risk import router as yearly_risk_router
+from api.v1.macro_indicators import router as macro_indicators_router
 
 # Create the FastAPI app instance
 app = FastAPI(
@@ -28,6 +29,7 @@ app.add_middleware(
 # Include the forecast router
 app.include_router(forecast.router, prefix="/api/v1/forecast", tags=["Forecasting"])
 app.include_router(yearly_risk_router, prefix="/api/v1", tags=["yearly-risk"])
+app.include_router(macro_indicators_router, prefix="/api/v1", tags=["macro-indicators"])
 
 @app.get("/", tags=["Root"])
 async def read_root():
@@ -41,7 +43,8 @@ async def read_root():
             "1m_prediction": "/api/v1/forecast/predict/1m",
             "3m_prediction": "/api/v1/forecast/predict/3m", 
             "6m_prediction": "/api/v1/forecast/predict/6m",
-            "yearly_risk": "/api/v1/yearly-risk"
+            "yearly_risk": "/api/v1/yearly-risk",
+            "macro_indicators": "/api/v1/macro-indicators"
         }
     }
 
