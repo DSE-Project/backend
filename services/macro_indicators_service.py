@@ -39,7 +39,7 @@ class MacroIndicatorsService:
         
         # Alternative series IDs as fallbacks
         self.fallback_series = {
-            "NAPMPMI": ["NAPM", "MANEMP"],  # ISM PMI alternatives
+            "INDPRO": ["MANEMP", "CEU3000000001"],  # Industrial Production alternatives
             "UMCSENT": ["CSCICP03USM665S"],  # Consumer confidence alternatives
         }
         
@@ -70,10 +70,10 @@ class MacroIndicatorsService:
                 "symbol": "FEDFUNDS"
             },
             "ism_pmi": {
-                "fred_id": "NAPMPMI",
-                "name": "ISM Manufacturing PMI",
+                "fred_id": "INDPRO",
+                "name": "Industrial Production Index",
                 "unit": "Index",
-                "symbol": "PMI"
+                "symbol": "INDPRO"
             },
             "consumer_confidence": {
                 "fred_id": "UMCSENT",
