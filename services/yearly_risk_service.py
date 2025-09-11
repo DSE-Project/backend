@@ -11,9 +11,7 @@ from calendar import month_name
 from schemas.yearly_risk_schema import YearlyRiskResponse, MonthlyRiskData, YearlyRiskError
 from schemas.forecast_schema_1m import InputFeatures1M, CurrentMonthData1M
 from services.forecast_service_1m import predict_1m, initialize_1m_service
-
-# Historical data path
-HISTORICAL_DATA_PATH = "data/historical_data_1m.csv"
+from services.database_service import db_service
 
 def get_risk_level(probability: float) -> str:
     """Convert probability to risk level"""
@@ -35,12 +33,19 @@ def format_date_for_prediction(date_obj) -> str:
         raise RuntimeError(f"Failed to format date {date_obj}: {e}")
 
 def load_historical_data() -> pd.DataFrame:
-    """Load and prepare historical data"""
+    """Load and prepare historical data from Supabase"""
     try:
-        df = pd.read_csv(HISTORICAL_DATA_PATH, index_col='observation_date', parse_dates=True)
+        # Load data from Supabase database
+        df = db_service.load_historical_data('historical_data_1m')
+        
+        if df is None:
+            raise RuntimeError("Failed to load historical data from Supabase")
+        
+        print(f"✅ Loaded {len(df)} records from Supabase database")
         return df
+        
     except Exception as e:
-        raise RuntimeError(f"Failed to load historical data: {e}")
+        raise RuntimeError(f"Failed to load historical data from database: {e}")
 
 def prepare_prediction_data(row: pd.Series, observation_date: str) -> InputFeatures1M:
     """Convert a historical data row to InputFeatures1M format"""
@@ -85,20 +90,44 @@ def prepare_prediction_data(row: pd.Series, observation_date: str) -> InputFeatu
     except Exception as e:
         raise RuntimeError(f"Failed to prepare prediction data: {e}")
 
+def test_database_connection() -> bool:
+    """Test database connection before analysis"""
+    try:
+        if not db_service.test_connection():
+            print("❌ Database connection test failed")
+            return False
+        
+        # Try to load a small sample of data
+        test_data = db_service.load_data_with_filter('historical_data_1m', None, None)
+        if test_data is None or len(test_data) == 0:
+            print("❌ No data available in database")
+            return False
+        
+        print(f"✅ Database connection verified. {len(test_data)} records available")
+        return True
+        
+    except Exception as e:
+        print(f"❌ Database connection test failed: {e}")
+        return False
+
 def analyze_yearly_recession_risk(months_to_analyze: int = 12) -> YearlyRiskResponse:
     """
-    Analyze recession risk for the last N months using historical data
+    Analyze recession risk for the last N months using historical data from Supabase
     """
     try:
+        # Test database connection first
+        if not test_database_connection():
+            raise RuntimeError("Database connection failed. Please check your Supabase configuration.")
+        
         # Initialize 1M service if not already done
         if not initialize_1m_service():
             raise RuntimeError("Failed to initialize 1M forecasting service")
         
-        # Load historical data
+        # Load historical data from Supabase
         historical_df = load_historical_data()
         
         if len(historical_df) < months_to_analyze + 60:  # Need extra data for LSTM sequence
-            raise RuntimeError(f"Insufficient historical data. Need at least {months_to_analyze + 60} records")
+            raise RuntimeError(f"Insufficient historical data. Need at least {months_to_analyze + 60} records, but only {len(historical_df)} available")
         
         # Get the last N records for analysis
         analysis_records = historical_df.tail(months_to_analyze).copy()
@@ -106,7 +135,7 @@ def analyze_yearly_recession_risk(months_to_analyze: int = 12) -> YearlyRiskResp
         
         current_timestamp = datetime.now().isoformat()
         
-        print(f"Analyzing recession risk for {len(analysis_records)} months...")
+        print(f"Analyzing recession risk for {len(analysis_records)} months from Supabase data...")
         
         for i, (date_index, row) in enumerate(analysis_records.iterrows()):
             try:
@@ -118,7 +147,7 @@ def analyze_yearly_recession_risk(months_to_analyze: int = 12) -> YearlyRiskResp
                 historical_subset = historical_df.loc[:date_index].iloc[:-1]  # Exclude current record
                 
                 if len(historical_subset) < 60:  # Need minimum data for LSTM
-                    print(f"Skipping {observation_date}: insufficient historical data")
+                    print(f"Skipping {observation_date}: insufficient historical data ({len(historical_subset)} records)")
                     continue
                 
                 # Prepare input features
@@ -144,14 +173,14 @@ def analyze_yearly_recession_risk(months_to_analyze: int = 12) -> YearlyRiskResp
                 )
                 
                 monthly_risks.append(monthly_risk)
-                print(f"✅ Processed {observation_date}: {prediction_result.prob_1m:.3f} risk")
+                print(f"✅ Processed {observation_date}: {prediction_result.prob_1m:.3f} risk ({get_risk_level(prediction_result.prob_1m)})")
                 
             except Exception as e:
                 print(f"❌ Error processing {date_index}: {e}")
                 continue
         
         if not monthly_risks:
-            raise RuntimeError("No monthly risks could be calculated")
+            raise RuntimeError("No monthly risks could be calculated. Check your data and model configuration.")
         
         # Calculate summary statistics
         probabilities = [risk.recession_probability for risk in monthly_risks]
@@ -194,7 +223,8 @@ def analyze_yearly_recession_risk(months_to_analyze: int = 12) -> YearlyRiskResp
         model_info = {
             "model_version": "1m_v1.0",
             "prediction_model": "1-month LSTM",
-            "analysis_timestamp": current_timestamp
+            "analysis_timestamp": current_timestamp,
+            "data_source": "Supabase Database"
         }
         
         return YearlyRiskResponse(
@@ -206,6 +236,7 @@ def analyze_yearly_recession_risk(months_to_analyze: int = 12) -> YearlyRiskResp
         )
         
     except Exception as e:
+        print(f"❌ Yearly risk analysis failed: {e}")
         raise RuntimeError(f"Yearly risk analysis failed: {e}")
 
 def get_monthly_risk_summary(months: int = 12) -> Dict:
@@ -217,26 +248,35 @@ def get_monthly_risk_summary(months: int = 12) -> Dict:
             "average_risk": result.summary_statistics["average_risk"],
             "highest_risk": result.summary_statistics["highest_risk"],
             "trend": result.summary_statistics["trend"],
-            "months_analyzed": result.total_months_analyzed
+            "months_analyzed": result.total_months_analyzed,
+            "data_source": "Supabase Database"
         }
     except Exception as e:
         return {
             "success": False,
-            "error": str(e)
+            "error": str(e),
+            "data_source": "Supabase Database"
         }
 
 def test_yearly_risk_service():
-    """Test the yearly risk service"""
+    """Test the yearly risk service with Supabase data"""
     try:
-        print("🧪 Testing yearly risk service...")
+        print("🧪 Testing yearly risk service with Supabase data...")
+        
+        # Test database connection first
+        if not test_database_connection():
+            print("❌ Database connection failed")
+            return None
         
         # Test with last 6 months for faster testing
         result = analyze_yearly_recession_risk(months_to_analyze=6)
         
-        print(f"✅ Analysis completed for {result.total_months_analyzed} months")
+        print(f"✅ Analysis completed for {result.total_months_analyzed} months from Supabase")
         print(f"📊 Average risk: {result.summary_statistics['average_risk']:.3f}")
         print(f"📈 Highest risk: {result.summary_statistics['highest_risk']:.3f} in {result.summary_statistics['highest_risk_month']}")
-        print(f"📉 Trend: {result.summary_statistics['trend']}")
+        print(f"📉 Lowest risk: {result.summary_statistics['lowest_risk']:.3f} in {result.summary_statistics['lowest_risk_month']}")
+        print(f"📈 Trend: {result.summary_statistics['trend']}")
+        print(f"🗄️ Data source: {result.model_info['data_source']}")
         
         return result
         
