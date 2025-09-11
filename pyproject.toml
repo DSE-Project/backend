@@ -69,6 +69,7 @@ dependencies = [
     "sqlalchemy>=2.0.43",
     "starlette==0.47.3",
     "statsmodels>=0.14.5",
+    "supabase>=2.18.1",
     "tensorboard==2.20.0",
     "tensorboard-data-server==0.7.2",
     "tensorflow==2.20.0",

@@ -1,61 +1,99 @@
 import os
 import pandas as pd
-from sqlalchemy import create_engine, text
+from supabase import create_client, Client
 from typing import Optional
 import logging
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 logger = logging.getLogger(__name__)
 
 class DatabaseService:
     def __init__(self):
-        self.engine = None
+        self.supabase: Optional[Client] = None
         self._initialize_connection()
     
     def _initialize_connection(self):
-        """Initialize database connection"""
+        """Initialize Supabase connection"""
         try:
-            # Get database URL from environment
-            database_url = os.getenv('SUPABASE_DATABASE_URL')
-            if not database_url:
-                raise ValueError("SUPABASE_DATABASE_URL environment variable not set")
+            # Get Supabase credentials from environment
+            supabase_url = os.getenv('SUPABASE_URL')
+            supabase_key = os.getenv('SUPABASE_ANON_KEY')
             
-            self.engine = create_engine(database_url)
-            logger.info("✅ Database connection initialized successfully")
+            if not supabase_url or not supabase_key:
+                raise ValueError("SUPABASE_URL and SUPABASE_ANON_KEY environment variables must be set")
+            
+            self.supabase = create_client(supabase_url, supabase_key)
+            logger.info("✅ Supabase connection initialized successfully")
         except Exception as e:
-            logger.error(f"❌ Failed to initialize database connection: {e}")
+            logger.error(f"❌ Failed to initialize Supabase connection: {e}")
             raise
     
-    def load_historical_data(self, table_name: str, date_column: str = 'observation_date') -> Optional[pd.DataFrame]:
-        """Load historical data from database table"""
+    def load_historical_data(self, table_name: str) -> Optional[pd.DataFrame]:
+        """Load historical data from Supabase table"""
         try:
-            query = f"""
-            SELECT * FROM {table_name} 
-            ORDER BY {date_column}
-            """
+            # Query all data from the table, ordered by observation_date
+            response = self.supabase.table(table_name).select("*").order('observation_date').execute()
             
-            df = pd.read_sql_query(
-                query, 
-                self.engine, 
-                index_col=date_column,
-                parse_dates=[date_column]
-            )
-            
-            logger.info(f"✅ Loaded {len(df)} records from {table_name}")
-            return df
-            
+            if response.data:
+                # Convert to DataFrame
+                df = pd.DataFrame(response.data)
+                
+                # Set observation_date as index and parse as datetime
+                df['observation_date'] = pd.to_datetime(df['observation_date'])
+                df.set_index('observation_date', inplace=True)
+                
+                logger.info(f"✅ Loaded {len(df)} records from {table_name}")
+                return df
+            else:
+                logger.warning(f"⚠️ No data found in table {table_name}")
+                return None
+                
         except Exception as e:
             logger.error(f"❌ Failed to load data from {table_name}: {e}")
             return None
     
-    def test_connection(self) -> bool:
-        """Test database connection"""
+    def load_data_with_filter(self, table_name: str, start_date: str = None, end_date: str = None) -> Optional[pd.DataFrame]:
+        """Load historical data with date filtering"""
         try:
-            with self.engine.connect() as conn:
-                result = conn.execute(text("SELECT 1"))
-                return True
+            query = self.supabase.table(table_name).select("*")
+            
+            if start_date:
+                query = query.gte('observation_date', start_date)
+            if end_date:
+                query = query.lte('observation_date', end_date)
+                
+            response = query.order('observation_date').execute()
+            
+            if response.data:
+                df = pd.DataFrame(response.data)
+                df['observation_date'] = pd.to_datetime(df['observation_date'])
+                df.set_index('observation_date', inplace=True)
+                
+                logger.info(f"✅ Loaded {len(df)} filtered records from {table_name}")
+                return df
+            else:
+                logger.warning(f"⚠️ No data found in table {table_name} with given filters")
+                return None
+                
         except Exception as e:
-            logger.error(f"❌ Database connection test failed: {e}")
+            logger.error(f"❌ Failed to load filtered data from {table_name}: {e}")
+            return None
+    
+    def test_connection(self) -> bool:
+        """Test Supabase connection"""
+        try:
+            # Try a simple query to test connection
+            response = self.supabase.table('historical_data_1m').select("observation_date").limit(1).execute()
+            print(response)
+            return True
+        except Exception as e:
+            logger.error(f"❌ Supabase connection test failed: {e}")
             return False
+        
 
 # Global database service instance
 db_service = DatabaseService()
+

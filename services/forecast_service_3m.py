@@ -15,7 +15,7 @@ from tensorflow.keras import backend as K
 # Model and scaler paths
 MODEL_3M_PATH = "ml_models/3m/model_3_months.keras"
 SCALER_3M_PATH = "ml_models/3m/scaler_3.pkl"
-HISTORICAL_DATA_PATH_3M = "data/historical_data_3m_new.csv"
+HISTORICAL_DATA_PATH_3M = "data/historical_data_3m.csv"
 
 # Global variables for model and scaler
 model_3m = None
