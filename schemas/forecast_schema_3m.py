@@ -97,7 +97,7 @@ class ForecastResponse3M(BaseModel):
 
 class ModelStatus3M(BaseModel):   
     """Status information for the 3-month model"""
-    odel_loaded: bool
+    model_loaded: bool
     scaler_loaded: bool
     model_version: str
     last_updated: str

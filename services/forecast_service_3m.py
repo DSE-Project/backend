@@ -11,11 +11,11 @@ from datetime import datetime
 from schemas.forecast_schema_3m import InputFeatures3M, ForecastResponse3M, CurrentMonthData3M, ModelStatus3M
 import joblib
 from tensorflow.keras import backend as K
+from services.database_service import db_service
 
 # Model and scaler paths
 MODEL_3M_PATH = "ml_models/3m/model_3_months.keras"
 SCALER_3M_PATH = "ml_models/3m/scaler_3.pkl"
-HISTORICAL_DATA_PATH_3M = "data/historical_data_3m.csv"
 
 # Global variables for model and scaler
 model_3m = None
@@ -60,14 +60,18 @@ def load_scaler_3m():
         return False
     
 def load_historical_data_3m():
-    """Load historical data for LSTM sequence preparation"""
+    """Load historical data from Supabase database"""
     global historical_data_3m
     try:
-        historical_data_3m = pd.read_csv(HISTORICAL_DATA_PATH_3M, index_col='observation_date', parse_dates=True)
-        print(f"✅ Historical data of 3 months loaded: {len(historical_data_3m)} records")
-        return True
+        historical_data_3m = db_service.load_historical_data('historical_data_3m')
+        if historical_data_3m is not None:
+            print(f"✅ Historical data loaded from database: {len(historical_data_3m)} records")
+            return True
+        else:
+            print("❌ Failed to load historical data from database")
+            return False
     except Exception as e:
-        print(f"❌ Error loading historical data of 3 months: {e}")
+        print(f"❌ Error loading historical data from database: {e}")
         historical_data_3m = None
         return False    
 
