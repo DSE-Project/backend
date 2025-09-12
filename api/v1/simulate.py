@@ -103,43 +103,6 @@ async def get_important_features(
             detail=f"Failed to get important features: {str(e)}"
         )
 
-# @router.get("/validate/{model_period}/{feature_code}")
-# async def validate_feature_value(
-#     model_period: str = Path(..., description="Model period: 1m, 3m, or 6m"),
-#     feature_code: str = Path(..., description="Feature code to validate"),
-#     value: float = Query(..., description="Value to validate")
-# ):
-#     """
-#     Validate if a feature value is within acceptable range
-    
-#     - **model_period**: The model period (1m, 3m, or 6m)
-#     - **feature_code**: The feature code (e.g., 'fedfunds', 'TB3MS')
-#     - **value**: The value to validate
-    
-#     Returns validation result and message
-#     """
-#     if model_period not in ["1m", "3m", "6m"]:
-#         raise HTTPException(
-#             status_code=400, 
-#             detail=f"Invalid model period: {model_period}. Must be one of: 1m, 3m, 6m"
-#         )
-    
-#     try:
-#         is_valid, message = simulate_service.validate_feature_value(model_period, feature_code, value)
-        
-#         return {
-#             "model_period": model_period,
-#             "feature_code": feature_code,
-#             "value": value,
-#             "is_valid": is_valid,
-#             "message": message
-#         }
-        
-#     except Exception as e:
-#         raise HTTPException(
-#             status_code=500, 
-#             detail=f"Failed to validate feature value: {str(e)}"
-#         )
 
 @router.get("/summary")
 async def get_feature_summary(
