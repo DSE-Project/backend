@@ -4,8 +4,9 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from api.v1 import forecast
+from api.v1.forecast import router as forecast_router
 from api.v1.yearly_risk import router as yearly_risk_router
+from api.v1.simulate import router as simulate_router
 
 # Create the FastAPI app instance
 app = FastAPI(
@@ -25,9 +26,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Include the forecast router
-app.include_router(forecast.router, prefix="/api/v1/forecast", tags=["Forecasting"])
+# Include the routers
+app.include_router(forecast_router, prefix="/api/v1/forecast", tags=["Forecasting"])
 app.include_router(yearly_risk_router, prefix="/api/v1", tags=["yearly-risk"])
+app.include_router(simulate_router, prefix="/api/v1/simulate", tags=["Simulation"])
 
 @app.get("/", tags=["Root"])
 async def read_root():
