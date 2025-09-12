@@ -11,6 +11,7 @@ from datetime import datetime
 from schemas.forecast_schema_6m import InputFeatures6M, ForecastResponse6M, CurrentMonthData6M, ModelStatus6M
 import joblib
 from tensorflow.keras import backend as K
+from services.database_service import db_service
 
 # Model and scaler paths
 MODEL_6M_PATH = "ml_models/6m/model_6_months.keras"
@@ -60,14 +61,18 @@ def load_scaler_6m():
         return False
     
 def load_historical_data_6m():
-    """Load historical data for LSTM sequence preparation"""
+    """Load historical data from Supabase database"""
     global historical_data_6m
     try:
-        historical_data_6m = pd.read_csv(HISTORICAL_DATA_PATH_6M, index_col='observation_date', parse_dates=True)
-        print(f"✅ Historical data of 3 months loaded: {len(historical_data_6m)} records")
-        return True
+        historical_data_6m = db_service.load_historical_data('historical_data_6m')
+        if historical_data_6m is not None:
+            print(f"✅ Historical data loaded from database: {len(historical_data_6m)} records")
+            return True
+        else:
+            print("❌ Failed to load historical data from database")
+            return False
     except Exception as e:
-        print(f"❌ Error loading historical data of 6 months: {e}")
+        print(f"❌ Error loading historical data from database: {e}")
         historical_data_6m = None
         return False    
 
@@ -242,7 +247,7 @@ def test_prediction_6m():
         total_time = time.time() - start_time
         
         print("=== 3M RECESSION PREDICTION RESULTS ===")
-        print(f"Recession Probability: {result.prob_3m:.4f}")
+        print(f"Recession Probability: {result.prob_6m:.4f}")
         print(f"Model Version: {result.model_version}")
         print(f"Timestamp: {result.timestamp}")
         print(f"Input Date: {result.input_date}")

@@ -98,7 +98,7 @@ class ForecastResponse6M(BaseModel):
 
 class ModelStatus6M(BaseModel):   
     """Status information for the 6-month model"""
-    odel_loaded: bool
+    model_loaded: bool
     scaler_loaded: bool
     model_version: str
     last_updated: str

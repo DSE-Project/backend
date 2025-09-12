@@ -11,11 +11,11 @@ from typing import Optional
 from tensorflow.keras import backend as K
 from statsmodels.tsa.seasonal import STL
 from schemas.forecast_schema_1m import InputFeatures1M, ForecastResponse1M, CurrentMonthData1M, ModelStatus1M
+from services.database_service import db_service
 
 # Model and scaler paths
 MODEL_1M_PATH = "ml_models/1m/model_1m.keras"
 SCALER_1M_PATH = "ml_models/1m/scaler_1m.pkl"
-HISTORICAL_DATA_PATH = "data/historical_data_1m.csv"  
 
 # Global variables for model and scaler
 model_1m = None
@@ -60,14 +60,18 @@ def load_scaler_1m():
         return False
 
 def load_historical_data_1m():
-    """Load historical data for LSTM sequence preparation"""
+    """Load historical data from Supabase database"""
     global historical_data_1m
     try:
-        historical_data_1m = pd.read_csv(HISTORICAL_DATA_PATH, index_col='observation_date', parse_dates=True)
-        print(f"✅ Historical data loaded: {len(historical_data_1m)} records")
-        return True
+        historical_data_1m = db_service.load_historical_data('historical_data_1m')
+        if historical_data_1m is not None:
+            print(f"✅ Historical data loaded from database: {len(historical_data_1m)} records")
+            return True
+        else:
+            print("❌ Failed to load historical data from database")
+            return False
     except Exception as e:
-        print(f"❌ Error loading historical data: {e}")
+        print(f"❌ Error loading historical data from database: {e}")
         historical_data_1m = None
         return False
 
