@@ -15,45 +15,6 @@ class DatabaseService:
         self.supabase: Optional[Client] = None
         self._initialize_connection()
         
-        # Column mapping from lowercase (DB) to original case (model expects)
-        self.column_mapping = {
-            'tb3ms': 'TB3MS',
-            'fedfunds': 'fedfunds',  # Already lowercase
-            'tb6ms': 'TB6MS', 
-            'tb1yr': 'TB1YR',
-            'usgood': 'USGOOD',
-            'ustpu': 'USTPU',
-            'srvprd': 'SRVPRD',
-            'uscons': 'USCONS',
-            'manemp': 'MANEMP',
-            'uswtrade': 'USWTRADE',
-            'ustrade': 'USTRADE',
-            'usinfo': 'USINFO',
-            'unrate': 'UNRATE',
-            'unemploy': 'UNEMPLOY',
-            'cpifood': 'CPIFOOD',
-            'cpimedicare': 'CPIMEDICARE',
-            'cpirent': 'CPIRENT',
-            'cpiapp': 'CPIAPP',
-            'gdp': 'GDP',
-            'realgdp': 'REALGDP',
-            'pcepi': 'PCEPI',
-            'psavert': 'PSAVERT',
-            'pstax': 'PSTAX',
-            'comreal': 'COMREAL',
-            'comloan': 'COMLOAN',
-            'securitybank': 'SECURITYBANK',
-            'ppiaco': 'PPIACO',
-            'm1sl': 'M1SL',
-            'm2sl': 'M2SL',
-            'csushpisa': 'CSUSHPISA',
-            'icsa': 'ICSA',
-            'bbkmleix': 'BBKMLEIX',
-            'umcsent': 'UMCSENT',
-            'indpro': 'INDPRO',
-            'recession': 'recession'
-        }
-    
     def _initialize_connection(self):
         """Initialize Supabase connection"""
         try:
@@ -70,19 +31,6 @@ class DatabaseService:
             logger.error(f"❌ Failed to initialize Supabase connection: {e}")
             raise
     
-    def _map_columns_to_original_case(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Map lowercase column names back to original case"""
-        df_mapped = df.copy()
-        
-        # Create reverse mapping for columns that exist in the dataframe
-        existing_mappings = {col: self.column_mapping.get(col, col) 
-                           for col in df.columns if col in self.column_mapping}
-        
-        df_mapped = df_mapped.rename(columns=existing_mappings)
-        
-        logger.info(f"Mapped {len(existing_mappings)} columns to original case")
-        return df_mapped
-    
     def load_historical_data(self, table_name: str) -> Optional[pd.DataFrame]:
         """Load historical data from Supabase table"""
         try:
@@ -93,8 +41,6 @@ class DatabaseService:
                 # Convert to DataFrame
                 df = pd.DataFrame(response.data)
                 
-                # Map column names to original case
-                df = self._map_columns_to_original_case(df)
                 
                 # Set observation_date as index and parse as datetime
                 df['observation_date'] = pd.to_datetime(df['observation_date'])
@@ -125,8 +71,6 @@ class DatabaseService:
             if response.data:
                 df = pd.DataFrame(response.data)
                 
-                # Map column names to original case
-                df = self._map_columns_to_original_case(df)
                 
                 df['observation_date'] = pd.to_datetime(df['observation_date'])
                 df.set_index('observation_date', inplace=True)
