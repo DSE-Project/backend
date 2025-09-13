@@ -6,6 +6,16 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from api.v1 import forecast
 from api.v1.yearly_risk import router as yearly_risk_router
+from api.v1.sentiment_component import router as sentiment_router
+
+from dotenv import load_dotenv
+
+env_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
+if os.path.exists(env_path):
+    load_dotenv(dotenv_path=env_path)
+else:
+    print("⚠️ .env file not found. Make sure to create one with SUPABASE_URL and SUPABASE_ANON_KEY")
+
 
 # Create the FastAPI app instance
 app = FastAPI(
@@ -28,6 +38,7 @@ app.add_middleware(
 # Include the forecast router
 app.include_router(forecast.router, prefix="/api/v1/forecast", tags=["Forecasting"])
 app.include_router(yearly_risk_router, prefix="/api/v1", tags=["yearly-risk"])
+app.include_router(sentiment_router, prefix="/api/v1/sentiment", tags=["Sentiment Analysis"])
 
 @app.get("/", tags=["Root"])
 async def read_root():
