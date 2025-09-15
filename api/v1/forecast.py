@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException,Body
 from schemas.forecast_schema_1m import InputFeatures1M, ForecastResponse1M
 from schemas.forecast_schema_3m import InputFeatures3M, ForecastResponse3M
 from schemas.forecast_schema_6m import InputFeatures6M, ForecastResponse6M
@@ -7,6 +7,7 @@ from services.forecast_service_1m import predict_1m, initialize_1m_service
 from services.forecast_service_3m import predict_3m
 from services.forecast_service_6m import predict_6m
 from pydantic import BaseModel
+from utils.feature_preparation import prepare_features_1m, prepare_features_3m,prepare_features_6m
 
 router = APIRouter()
 
@@ -102,3 +103,31 @@ async def test_1m_service():
             
     except Exception as e:
         return {"error": str(e)}
+# -------------------
+# Simulation endpoints
+# -------------------
+@router.post("/simulate/1m", response_model=ForecastResponse1M)
+async def simulate_1m(user_input: dict = Body(...)):
+    try:
+        features = prepare_features_1m(user_input)
+        return predict_1m(features)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/simulate/3m", response_model=ForecastResponse3M)
+async def simulate_3m(user_input: dict = Body(...)):
+    try:
+        from utils.feature_preparation import prepare_features_3m
+        features = prepare_features_3m(user_input)
+        return predict_3m(features)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/simulate/6m", response_model=ForecastResponse6M)
+async def simulate_6m(user_input: dict = Body(...)):
+    try:
+        from utils.feature_preparation import prepare_features_6m
+        features = prepare_features_6m(user_input)
+        return predict_6m(features)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
