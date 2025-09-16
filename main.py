@@ -29,7 +29,7 @@ from fastapi.responses import StreamingResponse
 from api.v1 import economic
 from io import BytesIO
 
-config = pdfkit.configuration(wkhtmltopdf=r"C:\Program Files\wkhtmltopdf\bin\wkhtmltopdf.exe")
+config = pdfkit.configuration(wkhtmltopdf=r"C:\\Program Files\\wkhtmltopdf\\bin\\wkhtmltopdf.exe")
 
 
 # Create the FastAPI app instance
