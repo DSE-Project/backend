@@ -31,6 +31,16 @@ from io import BytesIO
 
 config = pdfkit.configuration(wkhtmltopdf=r"C:\\Program Files\\wkhtmltopdf\\bin\\wkhtmltopdf.exe")
 
+from api.v1.sentiment_component import router as sentiment_router
+
+from dotenv import load_dotenv
+
+env_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
+if os.path.exists(env_path):
+    load_dotenv(dotenv_path=env_path)
+else:
+    print("⚠️ .env file not found. Make sure to create one with SUPABASE_URL and SUPABASE_ANON_KEY")
+
 
 # Create the FastAPI app instance
 app = FastAPI(
@@ -58,6 +68,7 @@ app.include_router(economic_charts_router, prefix="/api/v1", tags=["economic-cha
 app.include_router(yearly_risk_router, prefix="/api/v1", tags=["yearly-risk"])
 app.include_router(simulate_router, prefix="/api/v1/simulate", tags=["Simulation"])
 app.include_router(economic.router, prefix="/api/v1/economic")
+app.include_router(sentiment_router, prefix="/api/v1/sentiment", tags=["Sentiment Analysis"])
 
 @app.get("/", tags=["Root"])
 async def read_root():
