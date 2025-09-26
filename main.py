@@ -29,9 +29,10 @@ from fastapi.responses import StreamingResponse
 from api.v1 import economic
 from io import BytesIO
 
-config = pdfkit.configuration(wkhtmltopdf=r"C:\\Program Files\\wkhtmltopdf\\bin\\wkhtmltopdf.exe")
+# config = pdfkit.configuration(wkhtmltopdf="/usr/local/bin/wkhtmltopdf")
 
 from api.v1.sentiment_component import router as sentiment_router
+from api.v1.pipeline import router as pipeline_router
 
 from dotenv import load_dotenv
 
@@ -69,6 +70,7 @@ app.include_router(yearly_risk_router, prefix="/api/v1", tags=["yearly-risk"])
 app.include_router(simulate_router, prefix="/api/v1/simulate", tags=["Simulation"])
 app.include_router(economic.router, prefix="/api/v1/economic")
 app.include_router(sentiment_router, prefix="/api/v1/sentiment", tags=["Sentiment Analysis"])
+app.include_router(pipeline_router, prefix="/api/v1/pipeline", tags=["Data Pipeline"])
 
 @app.get("/", tags=["Root"])
 async def read_root():
@@ -85,7 +87,8 @@ async def read_root():
             "yearly_risk": "/api/v1/yearly-risk",
             "macro_indicators": "/api/v1/macro-indicators",
             "economic_charts": "/api/v1/economic-charts/historical-data",
-            "chart_statistics": "/api/v1/economic-charts/summary-stats"
+            "chart_statistics": "/api/v1/economic-charts/summary-stats",
+            "data_pipeline": "/api/v1/pipeline"
         }
     }
 
@@ -124,9 +127,27 @@ async def startup_event():
         else:
             print("⚠️ 6M forecasting service failed to initialize")
         
+        # Initialize the data pipeline scheduler
+        try:
+            from services.scheduler_service import scheduler_service
+            scheduler_service.start()
+            print("✅ Data pipeline scheduler initialized successfully")
+        except Exception as scheduler_error:
+            print(f"⚠️ Warning: Could not initialize pipeline scheduler: {scheduler_error}")
 
     except Exception as e:
         print(f"⚠️ Warning: Could not initialize some services: {e}")
+
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    """Clean shutdown"""
+    try:
+        from services.scheduler_service import scheduler_service
+        scheduler_service.stop()
+        print("📝 Data pipeline scheduler stopped")
+    except Exception as e:
+        print(f"⚠️ Warning during shutdown: {e}")
 
 class ReportRequest(BaseModel):
     htmlContent: str
