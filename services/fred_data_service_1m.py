@@ -3,6 +3,7 @@ import pandas as pd
 from datetime import datetime
 from typing import Optional, Dict, Any
 import logging
+import asyncio
 from services.database_service import db_service
 from services.forecast_service_1m import predict_1m, initialize_1m_service
 from schemas.forecast_schema_1m import InputFeatures1M, CurrentMonthData1M, ForecastResponse1M
@@ -47,8 +48,8 @@ SERIES_IDS = {
     "recession": "USREC"
 }
 
-async def fetch_latest_observation(series_id: str) -> Dict[str, Any]:
-    """Fetch latest observation for a specific series from FRED API"""
+async def fetch_latest_observation(series_id: str, timeout: int = 30, max_retries: int = 3) -> Dict[str, Any]:
+    """Fetch latest observation for a specific series from FRED API with retry logic"""
     params = {
         "series_id": series_id,
         "api_key": FRED_API_KEY,
@@ -57,27 +58,81 @@ async def fetch_latest_observation(series_id: str) -> Dict[str, Any]:
         "limit": 1
     }
     
-    async with httpx.AsyncClient() as client:
-        response = await client.get(BASE_URL, params=params)
-        response.raise_for_status()
-        return response.json()
+    for attempt in range(max_retries):
+        try:
+            # Add timeout and retry configuration
+            timeout_config = httpx.Timeout(timeout)
+            async with httpx.AsyncClient(timeout=timeout_config) as client:
+                logger.info(f"Attempting to fetch {series_id} (attempt {attempt + 1}/{max_retries})")
+                response = await client.get(BASE_URL, params=params)
+                response.raise_for_status()
+                
+                data = response.json()
+                logger.info(f"Successfully fetched {series_id}")
+                return data
+                
+        except httpx.TimeoutException as e:
+            logger.warning(f"Timeout for {series_id} on attempt {attempt + 1}: {e}")
+            if attempt < max_retries - 1:
+                await asyncio.sleep(1)  # Wait 1 second before retry
+            else:
+                raise Exception(f"Timeout after {max_retries} attempts: {e}")
+                
+        except httpx.HTTPStatusError as e:
+            logger.error(f"HTTP error for {series_id} on attempt {attempt + 1}: Status {e.response.status_code} - {e.response.text}")
+            if e.response.status_code == 429:  # Rate limit
+                wait_time = 2 ** attempt  # Exponential backoff
+                logger.info(f"Rate limited, waiting {wait_time} seconds")
+                await asyncio.sleep(wait_time)
+                if attempt < max_retries - 1:
+                    continue
+            raise Exception(f"HTTP {e.response.status_code}: {e.response.text}")
+            
+        except httpx.RequestError as e:
+            logger.error(f"Request error for {series_id} on attempt {attempt + 1}: {e}")
+            if attempt < max_retries - 1:
+                await asyncio.sleep(1)
+            else:
+                raise Exception(f"Request error after {max_retries} attempts: {e}")
+                
+        except Exception as e:
+            logger.error(f"Unexpected error for {series_id} on attempt {attempt + 1}: {e}")
+            if attempt < max_retries - 1:
+                await asyncio.sleep(1)
+            else:
+                raise Exception(f"Unexpected error after {max_retries} attempts: {e}")
 
 async def get_fred_latest_date() -> Optional[str]:
     """Get the latest observation date from FRED API using FEDFUNDS series"""
     try:
+        logger.info("Fetching latest FRED date using FEDFUNDS series")
         data = await fetch_latest_observation(SERIES_IDS["fedfunds"])
-        if data and "observations" in data and len(data["observations"]) > 0:
-            latest_date = data["observations"][0]["date"]
-            logger.info(f"Latest FRED date: {latest_date}")
-            return latest_date
-        return None
+        
+        if not data:
+            logger.error("No data returned from FRED API")
+            return None
+            
+        if "observations" not in data:
+            logger.error(f"No observations in FRED response: {data}")
+            return None
+            
+        observations = data["observations"]
+        if len(observations) == 0:
+            logger.error("Empty observations array from FRED API")
+            return None
+            
+        latest_date = observations[0]["date"]
+        logger.info(f"Latest FRED date: {latest_date}")
+        return latest_date
+        
     except Exception as e:
-        logger.error(f"Failed to fetch latest FRED date: {e}")
+        logger.error(f"Failed to fetch latest FRED date: {type(e).__name__}: {str(e)}")
         return None
 
 def get_database_latest_date() -> Optional[str]:
     """Get the latest observation date from database"""
     try:
+        logger.info("Fetching latest database date")
         # Get the latest record from historical_data_1m table
         response = db_service.supabase.table('historical_data_1m')\
             .select("observation_date")\
@@ -91,34 +146,55 @@ def get_database_latest_date() -> Optional[str]:
             db_date = pd.to_datetime(latest_date).strftime('%Y-%m-%d')
             logger.info(f"Latest database date: {db_date}")
             return db_date
-        return None
+        else:
+            logger.info("No data found in database")
+            return None
     except Exception as e:
-        logger.error(f"Failed to fetch latest database date: {e}")
+        logger.error(f"Failed to fetch latest database date: {type(e).__name__}: {str(e)}")
         return None
 
 async def fetch_all_fred_data() -> Optional[Dict[str, Any]]:
-    """Fetch all latest observations from FRED API"""
+    """Fetch all latest observations from FRED API with better error handling"""
     try:
+        logger.info("Starting to fetch all FRED data")
         results = {}
-        for name, series_id in SERIES_IDS.items():
+        failed_series = []
+        
+        # Add delay between requests to avoid rate limiting
+        for i, (name, series_id) in enumerate(SERIES_IDS.items()):
             try:
-                data = await fetch_latest_observation(series_id)
+                # Add small delay between requests
+                if i > 0:
+                    await asyncio.sleep(0.1)  # 100ms delay
+                
+                logger.info(f"Fetching {name} ({series_id}) - {i+1}/{len(SERIES_IDS)}")
+                data = await fetch_latest_observation(series_id, timeout=20)
+                
                 if data and "observations" in data and len(data["observations"]) > 0:
                     obs = data["observations"][0]
                     results[name] = {
                         "date": obs["date"],
                         "value": float(obs["value"]) if obs["value"] != "." else None
                     }
+                    logger.info(f"Successfully fetched {name}: {obs['value']}")
                 else:
                     logger.warning(f"No data found for {name} ({series_id})")
                     results[name] = None
+                    failed_series.append(name)
+                    
             except Exception as e:
-                logger.error(f"Failed to fetch {name} ({series_id}): {e}")
+                logger.error(f"Failed to fetch {name} ({series_id}): {type(e).__name__}: {str(e)}")
                 results[name] = None
+                failed_series.append(name)
         
+        if failed_series:
+            logger.warning(f"Failed to fetch {len(failed_series)} series: {failed_series}")
+        
+        logger.info(f"Completed fetching FRED data. Success: {len(results) - len(failed_series)}/{len(results)}")
         return results
+        
     except Exception as e:
-        logger.error(f"Failed to fetch FRED data: {e}")
+        logger.error(f"Failed to fetch FRED data: {type(e).__name__}: {str(e)}")
         return None
 
 def insert_fred_data_to_database(fred_data: Dict[str, Any]) -> bool:
@@ -170,7 +246,7 @@ def insert_fred_data_to_database(fred_data: Dict[str, Any]) -> bool:
             return False
             
     except Exception as e:
-        logger.error(f"Failed to insert FRED data into database: {e}")
+        logger.error(f"Failed to insert FRED data into database: {type(e).__name__}: {str(e)}")
         return False
 
 def get_latest_database_row() -> Optional[Dict[str, Any]]:
@@ -186,7 +262,7 @@ def get_latest_database_row() -> Optional[Dict[str, Any]]:
             return response.data[0]
         return None
     except Exception as e:
-        logger.error(f"Failed to get latest database row: {e}")
+        logger.error(f"Failed to get latest database row: {type(e).__name__}: {str(e)}")
         return None
 
 def convert_to_input_features(data_row: Dict[str, Any]) -> InputFeatures1M:
@@ -252,7 +328,7 @@ def convert_to_input_features(data_row: Dict[str, Any]) -> InputFeatures1M:
             historical_data_source="database"
         )
     except Exception as e:
-        logger.error(f"Failed to convert data to InputFeatures1M: {e}")
+        logger.error(f"Failed to convert data to InputFeatures1M: {type(e).__name__}: {str(e)}")
         raise
 
 async def get_latest_prediction_1m() -> ForecastResponse1M:
@@ -264,16 +340,42 @@ async def get_latest_prediction_1m() -> ForecastResponse1M:
     4. Make prediction
     """
     try:
+        logger.info("Starting 1M prediction process")
+        
         # Initialize service if needed
         if not initialize_1m_service():
             raise RuntimeError("Failed to initialize 1M forecasting service")
         
         # Step 1: Get latest date from FRED
+        logger.info("Step 1: Getting latest FRED date")
         fred_latest_date = await get_fred_latest_date()
         if not fred_latest_date:
-            raise RuntimeError("Could not fetch latest date from FRED API")
+            # Fallback to database if FRED fails
+            logger.warning("Could not fetch latest date from FRED API, using database fallback")
+            db_latest_date = get_database_latest_date()
+            if not db_latest_date:
+                raise RuntimeError("Could not fetch date from FRED or database")
+            
+            # Use database data as fallback
+            logger.info("Using database data as fallback due to FRED API failure")
+            latest_row = get_latest_database_row()
+            if not latest_row:
+                raise RuntimeError("Failed to get latest row from database")
+            
+            features = convert_to_input_features(latest_row)
+            prediction_result = predict_1m(features)
+            
+            # Add metadata
+            prediction_result.feature_importance = {
+                "data_source": "database_fallback",
+                "fred_date": "unavailable",
+                "db_date": db_latest_date,
+                "note": "Used database fallback due to FRED API failure"
+            }
+            return prediction_result
         
         # Step 2: Get latest date from database
+        logger.info("Step 2: Getting latest database date")
         db_latest_date = get_database_latest_date()
         
         logger.info(f"FRED latest: {fred_latest_date}, DB latest: {db_latest_date}")
@@ -281,7 +383,7 @@ async def get_latest_prediction_1m() -> ForecastResponse1M:
         # Step 3: Determine data source and fetch accordingly
         if db_latest_date and fred_latest_date == db_latest_date:
             # Dates match - use database data
-            logger.info("Using existing database data")
+            logger.info("Using existing database data (dates match)")
             latest_row = get_latest_database_row()
             if not latest_row:
                 raise RuntimeError("Failed to get latest row from database")
@@ -291,10 +393,25 @@ async def get_latest_prediction_1m() -> ForecastResponse1M:
             
         else:
             # Dates don't match or no DB data - fetch from FRED
-            logger.info("Fetching new data from FRED API")
+            logger.info("Fetching new data from FRED API (dates don't match)")
             fred_data = await fetch_all_fred_data()
             if not fred_data:
-                raise RuntimeError("Failed to fetch data from FRED API")
+                # Fallback to database if available
+                if db_latest_date:
+                    logger.warning("FRED fetch failed, falling back to database data")
+                    latest_row = get_latest_database_row()
+                    if latest_row:
+                        features = convert_to_input_features(latest_row)
+                        prediction_result = predict_1m(features)
+                        prediction_result.feature_importance = {
+                            "data_source": "database_fallback",
+                            "fred_date": fred_latest_date,
+                            "db_date": db_latest_date,
+                            "note": "Fell back to database due to FRED data fetch failure"
+                        }
+                        return prediction_result
+                        
+                raise RuntimeError("Failed to fetch data from FRED API and no database fallback available")
             
             # Insert new data into database
             if not insert_fred_data_to_database(fred_data):
@@ -324,6 +441,7 @@ async def get_latest_prediction_1m() -> ForecastResponse1M:
             features = convert_to_input_features(data_row)
         
         # Step 4: Make prediction
+        logger.info("Step 4: Making prediction")
         prediction_result = predict_1m(features)
         
         # Add metadata about data source
@@ -338,8 +456,9 @@ async def get_latest_prediction_1m() -> ForecastResponse1M:
                 "db_date": db_latest_date
             }
         
+        logger.info("Successfully completed 1M prediction")
         return prediction_result
         
     except Exception as e:
-        logger.error(f"Failed to get latest prediction: {e}")
+        logger.error(f"Failed to get latest prediction: {type(e).__name__}: {str(e)}")
         raise RuntimeError(f"Prediction failed: {e}")
