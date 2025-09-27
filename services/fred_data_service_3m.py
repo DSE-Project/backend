@@ -1,6 +1,6 @@
 import httpx
 import pandas as pd
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional, Dict, Any
 import logging
 from services.database_service import db_service
@@ -15,7 +15,7 @@ BASE_URL = "https://api.stlouisfed.org/fred/series/observations"
 
 # Series IDs mapping for 3M model
 SERIES_IDS_3M = {
-    "ICSA": "ICSA",
+    "ICSA": "ICSA",  # Weekly series - needs special handling
     "CPIMEDICARE": "CPIMEDSL",
     "USWTRADE": "USWTRADE",
     "BBKMLEIX": "BBKMLEIX",
@@ -38,6 +38,9 @@ SERIES_IDS_3M = {
     "recession": "USREC"
 }
 
+# Define which series are weekly (need monthly averaging)
+WEEKLY_SERIES = {"ICSA"}
+
 async def fetch_latest_observation_3m(series_id: str) -> Dict[str, Any]:
     """Fetch latest observation for a specific series from FRED API"""
     params = {
@@ -52,6 +55,74 @@ async def fetch_latest_observation_3m(series_id: str) -> Dict[str, Any]:
         response = await client.get(BASE_URL, params=params)
         response.raise_for_status()
         return response.json()
+
+async def fetch_monthly_average_for_weekly_series(series_id: str, target_date: str) -> Optional[float]:
+    """
+    Fetch all weekly observations for a specific month and calculate the average
+    target_date should be in format 'YYYY-MM-DD'
+    """
+    try:
+        # Parse the target date to get year and month
+        target_dt = pd.to_datetime(target_date)
+        year = target_dt.year
+        month = target_dt.month
+        
+        # Calculate the first and last day of the month
+        first_day = f"{year}-{month:02d}-01"
+        if month == 12:
+            last_day = f"{year + 1}-01-01"
+        else:
+            last_day = f"{year}-{month + 1:02d}-01"
+        
+        logger.info(f"Fetching weekly data for {series_id} from {first_day} to {last_day}")
+        
+        # Fetch all observations for the month
+        params = {
+            "series_id": series_id,
+            "api_key": FRED_API_KEY,
+            "file_type": "json",
+            "observation_start": first_day,
+            "observation_end": last_day,
+            "sort_order": "asc"
+        }
+        
+        async with httpx.AsyncClient() as client:
+            response = await client.get(BASE_URL, params=params)
+            response.raise_for_status()
+            data = response.json()
+        
+        if data and "observations" in data and len(data["observations"]) > 0:
+            # Extract valid values (exclude "." values)
+            values = []
+            dates = []
+            
+            for obs in data["observations"]:
+                if obs["value"] != ".":
+                    try:
+                        obs_date = pd.to_datetime(obs["date"])
+                        # Only include observations that are actually in the target month
+                        if obs_date.year == year and obs_date.month == month:
+                            values.append(float(obs["value"]))
+                            dates.append(obs["date"])
+                    except (ValueError, TypeError):
+                        continue
+            
+            if values:
+                monthly_avg = sum(values) / len(values)
+                logger.info(f"Calculated monthly average for {series_id} ({year}-{month:02d}): {monthly_avg:.2f} from {len(values)} observations")
+                logger.info(f"Weekly values: {values}")
+                logger.info(f"Dates used: {dates}")
+                return monthly_avg
+            else:
+                logger.warning(f"No valid weekly observations found for {series_id} in {year}-{month:02d}")
+                return None
+        else:
+            logger.warning(f"No observations returned for {series_id} in {year}-{month:02d}")
+            return None
+            
+    except Exception as e:
+        logger.error(f"Failed to fetch monthly average for weekly series {series_id}: {e}")
+        return None
 
 async def get_fred_latest_date_3m() -> Optional[str]:
     """Get the latest observation date from FRED API using FEDFUNDS series"""
@@ -91,20 +162,62 @@ async def fetch_all_fred_data_3m() -> Optional[Dict[str, Any]]:
     """Fetch all latest observations from FRED API for 3M model"""
     try:
         results = {}
+        reference_date = None  # Will be set by the first monthly series (like fedfunds)
+        
+        # First, fetch monthly series to establish the reference date
         for name, series_id in SERIES_IDS_3M.items():
-            try:
-                data = await fetch_latest_observation_3m(series_id)
-                if data and "observations" in data and len(data["observations"]) > 0:
-                    obs = data["observations"][0]
-                    results[name] = {
-                        "date": obs["date"],
-                        "value": float(obs["value"]) if obs["value"] != "." else None
-                    }
-                else:
-                    logger.warning(f"No data found for {name} ({series_id})")
+            if name not in WEEKLY_SERIES:  # Skip weekly series in first pass
+                try:
+                    data = await fetch_latest_observation_3m(series_id)
+                    if data and "observations" in data and len(data["observations"]) > 0:
+                        obs = data["observations"][0]
+                        if reference_date is None:
+                            reference_date = obs["date"]  # Set reference date from first monthly series
+                        
+                        results[name] = {
+                            "date": obs["date"],
+                            "value": float(obs["value"]) if obs["value"] != "." else None
+                        }
+                    else:
+                        logger.warning(f"No data found for {name} ({series_id})")
+                        results[name] = None
+                except Exception as e:
+                    logger.error(f"Failed to fetch {name} ({series_id}): {e}")
                     results[name] = None
-            except Exception as e:
-                logger.error(f"Failed to fetch {name} ({series_id}): {e}")
+        
+        # Now handle weekly series using the reference date
+        if reference_date:
+            logger.info(f"Using reference date {reference_date} for weekly series calculations")
+            
+            for name in WEEKLY_SERIES:
+                if name in SERIES_IDS_3M:
+                    series_id = SERIES_IDS_3M[name]
+                    try:
+                        # Calculate monthly average for the weekly series
+                        monthly_avg = await fetch_monthly_average_for_weekly_series(series_id, reference_date)
+                        
+                        if monthly_avg is not None:
+                            results[name] = {
+                                "date": reference_date,  # Use the same date as monthly series
+                                "value": monthly_avg
+                            }
+                            logger.info(f"Successfully calculated monthly average for {name}: {monthly_avg}")
+                        else:
+                            logger.warning(f"Could not calculate monthly average for {name}, using default value")
+                            results[name] = {
+                                "date": reference_date,
+                                "value": 0.0  # Default value if calculation fails
+                            }
+                    except Exception as e:
+                        logger.error(f"Failed to fetch monthly average for {name} ({series_id}): {e}")
+                        results[name] = {
+                            "date": reference_date,
+                            "value": 0.0  # Default value on error
+                        }
+        else:
+            logger.error("No reference date available for weekly series calculations")
+            # Handle weekly series with default values
+            for name in WEEKLY_SERIES:
                 results[name] = None
         
         return results
@@ -242,7 +355,7 @@ async def get_latest_prediction_3m() -> ForecastResponse3M:
     Main function that handles the complete flow for 3M:
     1. Check FRED for latest date
     2. Compare with database
-    3. Fetch data accordingly
+    3. Fetch data accordingly (including weekly series averaging)
     4. Make prediction
     """
     try:
@@ -273,7 +386,7 @@ async def get_latest_prediction_3m() -> ForecastResponse3M:
             
         else:
             # Dates don't match or no DB data - fetch from FRED
-            logger.info("Fetching new data from FRED API for 3M")
+            logger.info("Fetching new data from FRED API for 3M (including weekly series averaging)")
             fred_data = await fetch_all_fred_data_3m()
             if not fred_data:
                 raise RuntimeError("Failed to fetch data from FRED API for 3M")
