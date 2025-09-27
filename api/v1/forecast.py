@@ -29,18 +29,23 @@ async def predict_all_timeframes(all_features: AllInputFeatures):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-# Individual endpoints
-@router.post("/predict/1m", response_model=ForecastResponse1M)
-async def predict_1m_recession(features: InputFeatures1M):
-    """1-month recession probability forecast"""
+# Individual endpoints - CHANGED FROM POST to GET
+@router.get("/predict/1m", response_model=ForecastResponse1M)
+async def predict_1m_recession():
+    """1-month recession probability forecast using latest FRED data"""
     try:
-        # Try to initialize if not already done
-        if not initialize_1m_service():
-            raise HTTPException(status_code=503, detail="1M forecasting service could not be initialized")
+        # Import the new service function
+        from services.fred_data_service_1m import get_latest_prediction_1m
         
-        return predict_1m(features)
+        # This function will handle all the logic:
+        # 1. Check FRED for latest date
+        # 2. Compare with database
+        # 3. Fetch data accordingly
+        # 4. Make prediction
+        result = await get_latest_prediction_1m()
+        return result
+        
     except RuntimeError as e:
-        # Check if it's a model loading issue
         if "not loaded" in str(e):
             raise HTTPException(status_code=503, detail="1M model or scaler is not available. Please check service status.")
         raise HTTPException(status_code=500, detail=str(e))
@@ -103,8 +108,9 @@ async def test_1m_service():
             
     except Exception as e:
         return {"error": str(e)}
+
 # -------------------
-# Simulation endpoints
+# Simulation endpoints (keep POST for manual input)
 # -------------------
 @router.post("/simulate/1m", response_model=ForecastResponse1M)
 async def simulate_1m(user_input: dict = Body(...)):
