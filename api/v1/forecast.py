@@ -5,7 +5,7 @@ from schemas.forecast_schema_6m import InputFeatures6M, ForecastResponse6M
 from services.forecast_orchestrator import get_all_predictions, AllPredictionsResponse
 from services.forecast_service_1m import predict_1m, initialize_1m_service
 from services.forecast_service_3m import predict_3m, initialize_3m_service
-from services.forecast_service_6m import predict_6m
+from services.forecast_service_6m import predict_6m, initialize_6m_service
 from pydantic import BaseModel
 from utils.feature_preparation import prepare_features_1m, prepare_features_3m,prepare_features_6m
 
@@ -29,7 +29,7 @@ async def predict_all_timeframes(all_features: AllInputFeatures):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-# Individual endpoints - CHANGED FROM POST to GET
+# Individual endpoints - ALL CHANGED FROM POST to GET
 @router.get("/predict/1m", response_model=ForecastResponse1M)
 async def predict_1m_recession():
     """1-month recession probability forecast using latest FRED data"""
@@ -74,13 +74,27 @@ async def predict_3m_recession():
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Unexpected error: {str(e)}")
 
-@router.post("/predict/6m", response_model=ForecastResponse6M)
-async def predict_6m_recession(features: InputFeatures6M):
-    """6-month recession probability forecast"""
+@router.get("/predict/6m", response_model=ForecastResponse6M)
+async def predict_6m_recession():
+    """6-month recession probability forecast using latest FRED data"""
     try:
-        return predict_6m(features)
-    except Exception as e:
+        # Import the new service function
+        from services.fred_data_service_6m import get_latest_prediction_6m
+        
+        # This function will handle all the logic:
+        # 1. Check FRED for latest date
+        # 2. Compare with database
+        # 3. Fetch data accordingly (including weekly series averaging)
+        # 4. Make prediction
+        result = await get_latest_prediction_6m()
+        return result
+        
+    except RuntimeError as e:
+        if "not loaded" in str(e):
+            raise HTTPException(status_code=503, detail="6M model or scaler is not available. Please check service status.")
         raise HTTPException(status_code=500, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Unexpected error: {str(e)}")
 
 # Add status endpoints
 @router.get("/status/1m")
@@ -94,6 +108,12 @@ async def get_3m_status():
     """Get 3-month model status"""
     from services.forecast_service_3m import get_model_info_3m
     return get_model_info_3m()
+
+@router.get("/status/6m")
+async def get_6m_status():
+    """Get 6-month model status"""
+    from services.forecast_service_6m import get_model_info_6m
+    return get_model_info_6m()
 
 # Test endpoints
 @router.get("/test/1m")
@@ -158,6 +178,39 @@ async def test_3m_service():
             }
         else:
             return {"error": "Test prediction failed", "status": get_model_info_3m()}
+            
+    except Exception as e:
+        return {"error": str(e)}
+
+@router.get("/test/6m")
+async def test_6m_service():
+    """Test the 6-month forecasting service"""
+    try:
+        from services.forecast_service_6m import test_prediction_6m, get_model_info_6m
+        
+        # Get service status
+        status = get_model_info_6m()
+        
+        # If service is not ready, try to initialize
+        if not status.model_loaded or not status.scaler_loaded:
+            if not initialize_6m_service():
+                return {"error": "Service initialization failed", "status": status}
+        
+        # Run test prediction
+        result = test_prediction_6m()
+        
+        if result:
+            return {
+                "status": "success",
+                "test_result": {
+                    "prob_6m": result.prob_6m,
+                    "model_version": result.model_version,
+                    "input_date": result.input_date
+                },
+                "service_status": get_model_info_6m()
+            }
+        else:
+            return {"error": "Test prediction failed", "status": get_model_info_6m()}
             
     except Exception as e:
         return {"error": str(e)}
