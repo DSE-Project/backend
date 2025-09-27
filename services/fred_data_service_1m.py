@@ -1,4 +1,5 @@
 import httpx
+import os
 import pandas as pd
 from datetime import datetime
 from typing import Optional, Dict, Any
@@ -11,7 +12,7 @@ from schemas.forecast_schema_1m import InputFeatures1M, CurrentMonthData1M, Fore
 logger = logging.getLogger(__name__)
 
 # FRED API Configuration
-FRED_API_KEY = "ef123a07a5f12077a0144db1f8cabf0d"
+FRED_API_KEY = os.getenv("FRED_API_KEY")
 BASE_URL = "https://api.stlouisfed.org/fred/series/observations"
 
 # Series IDs mapping

@@ -1,4 +1,5 @@
 import httpx
+import os
 import pandas as pd
 from datetime import datetime, timedelta
 from typing import Optional, Dict, Any
@@ -10,7 +11,7 @@ from schemas.forecast_schema_6m import InputFeatures6M, CurrentMonthData6M, Fore
 logger = logging.getLogger(__name__)
 
 # FRED API Configuration
-FRED_API_KEY = "ef123a07a5f12077a0144db1f8cabf0d"
+FRED_API_KEY = os.getenv("FRED_API_KEY")
 BASE_URL = "https://api.stlouisfed.org/fred/series/observations"
 
 # Series IDs mapping for 6M model
@@ -20,7 +21,7 @@ SERIES_IDS_6M = {
     "MANEMP": "MANEMP",
     "CPIAPP": "CPIAPPSL",
     "CSUSHPISA": "CSUSHPISA",
-    "ICSA": "ICSA",  # Weekly series - needs special handling
+    "ICSA": "ICSA",  
     "fedfunds": "FEDFUNDS",
     "BBKMLEIX": "BBKMLEIX",
     "TB3MS": "TB3MS",
