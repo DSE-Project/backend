@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 class SchedulerService:
     """
     Scheduler service for automated pipeline execution
-    Handles daily and weekly data pipeline runs
+    Handles monthly data pipeline runs (aligned with FRED data updates)
     """
     
     def __init__(self):
@@ -23,16 +23,10 @@ class SchedulerService:
         self.is_running = False
         
         # Configuration (can be moved to environment variables)
-        self.daily_schedule = {
-            'hour': 6,      # 6 AM EST (after FRED typically updates)
+        self.monthly_schedule = {
+            'day': 15,      # 15th of each month (mid-month after FRED updates)
+            'hour': 6,      # 6 AM EST
             'minute': 30,   # 30 minutes past the hour
-            'timezone': 'US/Eastern'
-        }
-        
-        self.weekly_schedule = {
-            'day_of_week': 0,        # Monday (0=Monday in APScheduler)
-            'hour': 7,               # 7 AM EST
-            'minute': 0,             # Top of the hour
             'timezone': 'US/Eastern'
         }
         
@@ -48,33 +42,19 @@ class SchedulerService:
             # Initialize the scheduler
             self.scheduler = AsyncIOScheduler()
             
-            # Add daily pipeline job
+            # Add monthly pipeline job
             self.scheduler.add_job(
-                func=self._run_daily_pipeline,
+                func=self._run_monthly_pipeline,
                 trigger=CronTrigger(
-                    hour=self.daily_schedule['hour'],
-                    minute=self.daily_schedule['minute'],
-                    timezone=self.daily_schedule['timezone']
+                    day=self.monthly_schedule['day'],
+                    hour=self.monthly_schedule['hour'],
+                    minute=self.monthly_schedule['minute'],
+                    timezone=self.monthly_schedule['timezone']
                 ),
-                id='daily_pipeline',
-                name='Daily Data Pipeline',
+                id='monthly_pipeline',
+                name='Monthly Data Pipeline',
                 replace_existing=True,
                 max_instances=1  # Prevent overlapping runs
-            )
-            
-            # Add weekly comprehensive pipeline job
-            self.scheduler.add_job(
-                func=self._run_weekly_pipeline,
-                trigger=CronTrigger(
-                    day_of_week=self.weekly_schedule['day_of_week'],
-                    hour=self.weekly_schedule['hour'],
-                    minute=self.weekly_schedule['minute'],
-                    timezone=self.weekly_schedule['timezone']
-                ),
-                id='weekly_pipeline',
-                name='Weekly Comprehensive Pipeline',
-                replace_existing=True,
-                max_instances=1
             )
             
             # Add a health check job (every hour)
@@ -92,8 +72,8 @@ class SchedulerService:
             self.is_running = True
             
             logger.info("✅ Scheduler started successfully")
-            logger.info(f"📅 Daily pipeline scheduled: {self.daily_schedule['hour']:02d}:{self.daily_schedule['minute']:02d} {self.daily_schedule['timezone']}")
-            logger.info(f"📅 Weekly pipeline scheduled: {self.weekly_schedule['day_of_week']} {self.weekly_schedule['hour']:02d}:{self.weekly_schedule['minute']:02d} {self.weekly_schedule['timezone']}")
+            logger.info(f"📅 Monthly pipeline scheduled: Day {self.monthly_schedule['day']} at {self.monthly_schedule['hour']:02d}:{self.monthly_schedule['minute']:02d} {self.monthly_schedule['timezone']}")
+            logger.info("� Health checks every hour")
             
         except Exception as e:
             logger.error(f"❌ Failed to start scheduler: {str(e)}")
@@ -114,24 +94,27 @@ class SchedulerService:
         except Exception as e:
             logger.error(f"❌ Error stopping scheduler: {str(e)}")
     
-    async def _run_daily_pipeline(self):
-        """Execute the daily pipeline job"""
+    async def _run_monthly_pipeline(self):
+        """Execute the monthly pipeline job"""
         try:
-            logger.info("🌅 Daily pipeline job started")
+            logger.info("📅 Monthly pipeline job started - checking for new FRED data")
             
-            # Run the pipeline with normal parameters
-            results = await self.pipeline.run_pipeline(force_retrain=False)
+            # Run the comprehensive pipeline with forced data check
+            results = await self.pipeline.run_pipeline(force_retrain=True)
             
             # Log results
             if results['status'] == 'completed':
-                logger.info(f"✅ Daily pipeline completed successfully")
+                logger.info("✅ Monthly pipeline completed successfully")
                 if results.get('models_retrained', False):
-                    logger.info("🤖 Models were retrained during daily run")
+                    updated_models = results.get('updated_models', [])
+                    logger.info(f"🤖 Models retrained: {updated_models}")
+                else:
+                    logger.info("📊 No model updates needed - existing models performed better")
             else:
-                logger.error(f"❌ Daily pipeline failed: {results.get('errors', [])}")
+                logger.error(f"❌ Monthly pipeline failed: {results.get('errors', [])}")
             
         except Exception as e:
-            logger.error(f"❌ Daily pipeline job failed: {str(e)}", exc_info=True)
+            logger.error(f"❌ Monthly pipeline job failed: {str(e)}", exc_info=True)
     
     async def _run_weekly_pipeline(self):
         """Execute the weekly comprehensive pipeline job"""
@@ -191,28 +174,10 @@ class SchedulerService:
             'jobs': jobs
         }
     
-    async def trigger_daily_pipeline_now(self) -> Dict[str, Any]:
-        """Manually trigger the daily pipeline"""
+    async def trigger_monthly_pipeline_now(self) -> Dict[str, Any]:
+        """Manually trigger the monthly pipeline"""
         try:
-            logger.info("🔧 Manual trigger: Daily pipeline")
-            results = await self.pipeline.run_pipeline(force_retrain=False)
-            return {
-                'success': True,
-                'trigger_time': datetime.now().isoformat(),
-                'pipeline_results': results
-            }
-        except Exception as e:
-            logger.error(f"❌ Manual daily pipeline trigger failed: {str(e)}")
-            return {
-                'success': False,
-                'error': str(e),
-                'trigger_time': datetime.now().isoformat()
-            }
-    
-    async def trigger_weekly_pipeline_now(self) -> Dict[str, Any]:
-        """Manually trigger the weekly comprehensive pipeline"""
-        try:
-            logger.info("🔧 Manual trigger: Weekly comprehensive pipeline")
+            logger.info("🔧 Manual trigger: Monthly pipeline")
             results = await self.pipeline.run_pipeline(force_retrain=True)
             return {
                 'success': True,
@@ -220,60 +185,37 @@ class SchedulerService:
                 'pipeline_results': results
             }
         except Exception as e:
-            logger.error(f"❌ Manual weekly pipeline trigger failed: {str(e)}")
+            logger.error(f"❌ Manual monthly pipeline trigger failed: {str(e)}")
             return {
                 'success': False,
                 'error': str(e),
                 'trigger_time': datetime.now().isoformat()
             }
     
-    def update_schedule(self, daily_config: Optional[Dict] = None, weekly_config: Optional[Dict] = None):
+    def update_schedule(self, monthly_config: Optional[Dict] = None):
         """
-        Update the schedule configuration
+        Update the monthly schedule configuration
         
         Args:
-            daily_config: New daily schedule config (hour, minute, timezone)
-            weekly_config: New weekly schedule config (day_of_week, hour, minute, timezone)
+            monthly_config: New monthly schedule config (day, hour, minute, timezone)
         """
         try:
             if not self.scheduler or not self.is_running:
                 logger.error("❌ Cannot update schedule: Scheduler not running")
                 return False
             
-            if daily_config:
-                self.daily_schedule.update(daily_config)
+            if monthly_config:
+                self.monthly_schedule.update(monthly_config)
                 self.scheduler.modify_job(
-                    'daily_pipeline',
+                    'monthly_pipeline',
                     trigger=CronTrigger(
-                        hour=self.daily_schedule['hour'],
-                        minute=self.daily_schedule['minute'],
-                        timezone=self.daily_schedule['timezone']
+                        day=self.monthly_schedule['day'],
+                        hour=self.monthly_schedule['hour'],
+                        minute=self.monthly_schedule['minute'],
+                        timezone=self.monthly_schedule['timezone']
                     )
                 )
-                logger.info(f"✅ Daily schedule updated: {self.daily_schedule}")
-            
-            if weekly_config:
-                # Handle day_of_week conversion if it's a string
-                if 'day_of_week' in weekly_config and isinstance(weekly_config['day_of_week'], str):
-                    day_mapping = {
-                        'monday': 0, 'tuesday': 1, 'wednesday': 2, 'thursday': 3,
-                        'friday': 4, 'saturday': 5, 'sunday': 6
-                    }
-                    day_name = weekly_config['day_of_week'].lower()
-                    if day_name in day_mapping:
-                        weekly_config['day_of_week'] = day_mapping[day_name]
-                    
-                self.weekly_schedule.update(weekly_config)
-                self.scheduler.modify_job(
-                    'weekly_pipeline',
-                    trigger=CronTrigger(
-                        day_of_week=self.weekly_schedule['day_of_week'],
-                        hour=self.weekly_schedule['hour'],
-                        minute=self.weekly_schedule['minute'],
-                        timezone=self.weekly_schedule['timezone']
-                    )
-                )
-                logger.info(f"✅ Weekly schedule updated: {self.weekly_schedule}")
+                logger.info(f"✅ Monthly schedule updated: {self.monthly_schedule}")
             
             return True
             

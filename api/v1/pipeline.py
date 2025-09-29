@@ -22,11 +22,9 @@ class PipelineStatusResponse(BaseModel):
     next_scheduled_run: Optional[str] = None
     
 class ScheduleUpdateRequest(BaseModel):
-    daily_hour: Optional[int] = Field(None, ge=0, le=23, description="Hour for daily pipeline (0-23)")
-    daily_minute: Optional[int] = Field(None, ge=0, le=59, description="Minute for daily pipeline (0-59)")
-    weekly_day: Optional[str] = Field(None, description="Day of week for weekly pipeline (monday, tuesday, etc.)")
-    weekly_hour: Optional[int] = Field(None, ge=0, le=23, description="Hour for weekly pipeline (0-23)")
-    weekly_minute: Optional[int] = Field(None, ge=0, le=59, description="Minute for weekly pipeline (0-59)")
+    monthly_day: Optional[int] = Field(None, ge=1, le=31, description="Day of month for monthly pipeline (1-31)")
+    monthly_hour: Optional[int] = Field(None, ge=0, le=23, description="Hour for monthly pipeline (0-23)")
+    monthly_minute: Optional[int] = Field(None, ge=0, le=59, description="Minute for monthly pipeline (0-59)")
     timezone: Optional[str] = Field(default="US/Eastern", description="Timezone for scheduling")
 
 @router.get("/status", response_model=PipelineStatusResponse, tags=["Pipeline Status"])
@@ -130,51 +128,28 @@ async def trigger_pipeline_sync(request: PipelineRunRequest):
         logger.error(f"Error in synchronous pipeline execution: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Pipeline execution failed: {str(e)}")
 
-@router.post("/trigger/daily", tags=["Pipeline Control"])
-async def trigger_daily_pipeline():
+@router.post("/trigger/monthly", tags=["Pipeline Control"])
+async def trigger_monthly_pipeline():
     """
-    Manually trigger the daily pipeline (normal data check and update)
+    Manually trigger the monthly pipeline (comprehensive data check and forced retrain)
     """
     try:
-        result = await scheduler_service.trigger_daily_pipeline_now()
+        result = await scheduler_service.trigger_monthly_pipeline_now()
         
         if result['success']:
             return {
                 "status": "success",
-                "message": "Daily pipeline triggered successfully",
+                "message": "Monthly pipeline triggered successfully",
                 "results": result
             }
         else:
-            raise HTTPException(status_code=500, detail=f"Daily pipeline failed: {result.get('error', 'Unknown error')}")
+            raise HTTPException(status_code=500, detail=f"Monthly pipeline failed: {result.get('error', 'Unknown error')}")
             
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error triggering daily pipeline: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Failed to trigger daily pipeline: {str(e)}")
-
-@router.post("/trigger/weekly", tags=["Pipeline Control"])
-async def trigger_weekly_pipeline():
-    """
-    Manually trigger the weekly comprehensive pipeline (forced retrain)
-    """
-    try:
-        result = await scheduler_service.trigger_weekly_pipeline_now()
-        
-        if result['success']:
-            return {
-                "status": "success", 
-                "message": "Weekly comprehensive pipeline triggered successfully",
-                "results": result
-            }
-        else:
-            raise HTTPException(status_code=500, detail=f"Weekly pipeline failed: {result.get('error', 'Unknown error')}")
-            
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error triggering weekly pipeline: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Failed to trigger weekly pipeline: {str(e)}")
+        logger.error(f"Error triggering monthly pipeline: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to trigger monthly pipeline: {str(e)}")
 
 @router.post("/retrain/{model_period}", tags=["Model Training"])
 async def retrain_specific_model(model_period: str):
@@ -243,51 +218,31 @@ async def retrain_all_models():
 @router.put("/schedule", tags=["Pipeline Configuration"])
 async def update_schedule(request: ScheduleUpdateRequest):
     """
-    Update the pipeline execution schedule
+    Update the monthly pipeline execution schedule
     """
     try:
-        daily_config = {}
-        weekly_config = {}
+        monthly_config = {}
         
-        # Build daily config
-        if request.daily_hour is not None:
-            daily_config['hour'] = request.daily_hour
-        if request.daily_minute is not None:
-            daily_config['minute'] = request.daily_minute
+        # Build monthly config
+        if request.monthly_day is not None:
+            monthly_config['day'] = request.monthly_day
+        if request.monthly_hour is not None:
+            monthly_config['hour'] = request.monthly_hour
+        if request.monthly_minute is not None:
+            monthly_config['minute'] = request.monthly_minute
         if request.timezone:
-            daily_config['timezone'] = request.timezone
-        
-        # Build weekly config  
-        if request.weekly_day is not None:
-            # Convert day name to number (APScheduler format)
-            day_mapping = {
-                'monday': 0, 'tuesday': 1, 'wednesday': 2, 'thursday': 3,
-                'friday': 4, 'saturday': 5, 'sunday': 6
-            }
-            day_name = request.weekly_day.lower()
-            if day_name in day_mapping:
-                weekly_config['day_of_week'] = day_mapping[day_name]
-            else:
-                raise HTTPException(status_code=400, detail=f"Invalid day name: {request.weekly_day}")
-        if request.weekly_hour is not None:
-            weekly_config['hour'] = request.weekly_hour
-        if request.weekly_minute is not None:
-            weekly_config['minute'] = request.weekly_minute
-        if request.timezone:
-            weekly_config['timezone'] = request.timezone
+            monthly_config['timezone'] = request.timezone
         
         # Update the schedule
         success = scheduler_service.update_schedule(
-            daily_config=daily_config if daily_config else None,
-            weekly_config=weekly_config if weekly_config else None
+            monthly_config=monthly_config if monthly_config else None
         )
         
         if success:
             return {
                 "status": "success",
-                "message": "Schedule updated successfully",
-                "daily_config": daily_config,
-                "weekly_config": weekly_config
+                "message": "Monthly schedule updated successfully",
+                "monthly_config": monthly_config
             }
         else:
             raise HTTPException(status_code=500, detail="Failed to update schedule")

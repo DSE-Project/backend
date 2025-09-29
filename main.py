@@ -1,47 +1,13 @@
 import sys
 import os
-import asyncio
-
-# Fix for Playwright on Windows (NotImplementedError)
-if sys.platform.startswith("win"):
-    asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
-
-import pdfkit
-from pydantic import BaseModel
-from fastapi import FastAPI, Query
-from fastapi.responses import StreamingResponse
-
-
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from fastapi.concurrency import run_in_threadpool
-from services.pdf_utils import render_url_to_pdf_sync
-
-from fastapi import FastAPI, Body
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from api.v1.forecast import router as forecast_router
-from api.v1.yearly_risk import router as yearly_risk_router
-from api.v1.simulate import router as simulate_router
+from api.v1 import forecast
 from api.v1.yearly_risk import router as yearly_risk_router
 from api.v1.macro_indicators import router as macro_indicators_router
 from api.v1.economic_charts import router as economic_charts_router
-from fastapi.responses import StreamingResponse
-from api.v1 import economic
-from io import BytesIO
-
-# config = pdfkit.configuration(wkhtmltopdf="/usr/local/bin/wkhtmltopdf")
-
-from api.v1.sentiment_component import router as sentiment_router
-from api.v1.pipeline import router as pipeline_router
-
-from dotenv import load_dotenv
-
-env_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
-if os.path.exists(env_path):
-    load_dotenv(dotenv_path=env_path)
-else:
-    print("⚠️ .env file not found. Make sure to create one with SUPABASE_URL and SUPABASE_ANON_KEY")
-
 
 # Create the FastAPI app instance
 app = FastAPI(
@@ -61,16 +27,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Include the routers
-app.include_router(forecast_router, prefix="/api/v1/forecast", tags=["Forecasting"])
+# Include the forecast router
+app.include_router(forecast.router, prefix="/api/v1/forecast", tags=["Forecasting"])
 app.include_router(yearly_risk_router, prefix="/api/v1", tags=["yearly-risk"])
 app.include_router(macro_indicators_router, prefix="/api/v1", tags=["macro-indicators"])
 app.include_router(economic_charts_router, prefix="/api/v1", tags=["economic-charts"])
-app.include_router(yearly_risk_router, prefix="/api/v1", tags=["yearly-risk"])
-app.include_router(simulate_router, prefix="/api/v1/simulate", tags=["Simulation"])
-app.include_router(economic.router, prefix="/api/v1/economic")
-app.include_router(sentiment_router, prefix="/api/v1/sentiment", tags=["Sentiment Analysis"])
-app.include_router(pipeline_router, prefix="/api/v1/pipeline", tags=["Data Pipeline"])
 
 @app.get("/", tags=["Root"])
 async def read_root():
@@ -87,8 +48,7 @@ async def read_root():
             "yearly_risk": "/api/v1/yearly-risk",
             "macro_indicators": "/api/v1/macro-indicators",
             "economic_charts": "/api/v1/economic-charts/historical-data",
-            "chart_statistics": "/api/v1/economic-charts/summary-stats",
-            "data_pipeline": "/api/v1/pipeline"
+            "chart_statistics": "/api/v1/economic-charts/summary-stats"
         }
     }
 
@@ -127,51 +87,9 @@ async def startup_event():
         else:
             print("⚠️ 6M forecasting service failed to initialize")
         
-        # Initialize the data pipeline scheduler
-        try:
-            from services.scheduler_service import scheduler_service
-            scheduler_service.start()
-            print("✅ Data pipeline scheduler initialized successfully")
-        except Exception as scheduler_error:
-            print(f"⚠️ Warning: Could not initialize pipeline scheduler: {scheduler_error}")
 
     except Exception as e:
         print(f"⚠️ Warning: Could not initialize some services: {e}")
-
-
-@app.on_event("shutdown")
-async def shutdown_event():
-    """Clean shutdown"""
-    try:
-        from services.scheduler_service import scheduler_service
-        scheduler_service.stop()
-        print("📝 Data pipeline scheduler stopped")
-    except Exception as e:
-        print(f"⚠️ Warning during shutdown: {e}")
-
-class ReportRequest(BaseModel):
-    htmlContent: str
-
-# @app.post("/generate-report")
-# async def generate_report(request: ReportRequest):
-#     pdf_bytes = pdfkit.from_string(request.htmlContent, False, configuration=config)
-#     pdf_file = BytesIO(pdf_bytes)
-#     pdf_file.seek(0)
-#     return StreamingResponse(
-#         pdf_file,
-#         media_type="application/pdf",
-#         headers={"Content-Disposition": "attachment; filename=report.pdf"}
-#     )
-
-@app.get("/generate-report")
-async def generate_report(url: str = Query(...)):
-    # Playwright can now access the public /reports-print route
-    pdf_file = await run_in_threadpool(render_url_to_pdf_sync, url)
-    return StreamingResponse(
-        pdf_file,
-        media_type="application/pdf",
-        headers={"Content-Disposition": "attachment; filename={filename}"}
-    )
 
 if __name__ == "__main__":
     import uvicorn

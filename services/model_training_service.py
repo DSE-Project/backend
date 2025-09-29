@@ -3,13 +3,23 @@ import sys
 import logging
 import asyncio
 from datetime import datetime
-from typing import Dict, Any, Tuple, Optional
+from typing import Dict, Any, Tuple, Optional, List
 import pandas as pd
 import numpy as np
 import tensorflow as tf
 import joblib
 from sklearn.preprocessing import StandardScaler
 from sklearn.model_selection import train_test_split
+from sklearn.metrics import (
+    average_precision_score, 
+    roc_auc_score, 
+    accuracy_score, 
+    precision_score, 
+    recall_score, 
+    f1_score,
+    precision_recall_curve,
+    auc
+)
 
 # Add the project root to the path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -69,6 +79,14 @@ class ModelTrainingService:
             ]
         }
         
+        # Performance comparison thresholds
+        self.performance_thresholds = {
+            'min_pr_auc_improvement': 0.01,  # Minimum 1% improvement in PR-AUC required
+            'min_accuracy_threshold': 0.60,   # Minimum accuracy threshold
+            'weight_pr_auc': 0.7,            # Weight for PR-AUC in combined score
+            'weight_accuracy': 0.3           # Weight for accuracy in combined score
+        }
+        
         logger.info("ModelTrainingService initialized successfully")
     
     def focal_loss(self, gamma=2., alpha=0.25):
@@ -82,6 +100,127 @@ class ModelTrainingService:
             bce_exp = K.exp(-bce)
             return K.mean(alpha * (1 - bce_exp) ** gamma * bce)
         return loss
+    
+    def get_model_required_features(self, period: str) -> List[str]:
+        """
+        Get the required features for a specific model period
+        
+        Args:
+            period: Model period ('1m', '3m', '6m')
+            
+        Returns:
+            List of required feature column names
+        """
+        if period not in self.model_feature_columns:
+            raise ValueError(f"Unsupported model period: {period}")
+        
+        return self.model_feature_columns[period]
+    
+    def evaluate_existing_model(self, period: str, X_val: np.ndarray, y_val: np.ndarray) -> Optional[Dict[str, float]]:
+        """
+        Evaluate the performance of the existing model
+        
+        Args:
+            period: Model period ('1m', '3m', or '6m')
+            X_val: Validation features
+            y_val: Validation labels
+            
+        Returns:
+            Dict with existing model performance metrics or None if model doesn't exist
+        """
+        try:
+            config = self.model_configs[period]
+            
+            # Check if existing model files exist
+            if not os.path.exists(config['model_path']) or not os.path.exists(config['scaler_path']):
+                logger.info(f"📊 No existing {period} model found - will save new model")
+                return None
+            
+            # Load existing model and scaler
+            existing_model = tf.keras.models.load_model(
+                config['model_path'],
+                custom_objects={'loss': self.focal_loss(gamma=2., alpha=0.25)},
+                compile=False
+            )
+            
+            # Compile the model with the same settings as training
+            existing_model.compile(
+                optimizer=tf.keras.optimizers.Adam(learning_rate=0.001),
+                loss=self.focal_loss(gamma=2., alpha=0.25),
+                metrics=['accuracy', 'precision', 'recall']
+            )
+            
+            # Evaluate existing model
+            existing_predictions = existing_model.predict(X_val, verbose=0)
+            existing_pred_binary = (existing_predictions > 0.5).astype(int).flatten()
+            existing_pred_proba = existing_predictions.flatten()
+            
+            # Calculate metrics
+            from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
+            
+            existing_performance = {
+                'accuracy': float(accuracy_score(y_val, existing_pred_binary)),
+                'precision': float(precision_score(y_val, existing_pred_binary, average='weighted', zero_division=0)),
+                'recall': float(recall_score(y_val, existing_pred_binary, average='weighted', zero_division=0)),
+                'f1_score': float(f1_score(y_val, existing_pred_binary, average='weighted', zero_division=0)),
+                'pr_auc': float(average_precision_score(y_val, existing_pred_proba)),
+                'roc_auc': float(roc_auc_score(y_val, existing_pred_proba)) if len(np.unique(y_val)) > 1 else 0.5
+            }
+            
+            # Calculate combined performance score
+            existing_performance['combined_score'] = (
+                existing_performance['pr_auc'] * self.performance_thresholds['weight_pr_auc'] +
+                existing_performance['accuracy'] * self.performance_thresholds['weight_accuracy']
+            )
+            
+            logger.info(f"📊 Existing {period} model performance:")
+            logger.info(f"    PR-AUC: {existing_performance['pr_auc']:.4f}")
+            logger.info(f"    Accuracy: {existing_performance['accuracy']:.4f}")
+            logger.info(f"    Combined Score: {existing_performance['combined_score']:.4f}")
+            
+            return existing_performance
+            
+        except Exception as e:
+            logger.warning(f"⚠️ Could not evaluate existing {period} model: {str(e)}")
+            return None
+    
+    def should_save_new_model(self, existing_performance: Optional[Dict[str, float]], 
+                             new_performance: Dict[str, float], period: str) -> Tuple[bool, str]:
+        """
+        Determine if the new model should be saved based on performance comparison
+        
+        Args:
+            existing_performance: Performance metrics of existing model (None if no existing model)
+            new_performance: Performance metrics of newly trained model
+            period: Model period for logging
+            
+        Returns:
+            Tuple of (should_save: bool, reason: str)
+        """
+        # If no existing model, save the new one
+        if existing_performance is None:
+            return True, "No existing model found"
+        
+        # Check minimum accuracy threshold
+        if new_performance['accuracy'] < self.performance_thresholds['min_accuracy_threshold']:
+            return False, f"New model accuracy ({new_performance['accuracy']:.4f}) below minimum threshold ({self.performance_thresholds['min_accuracy_threshold']})"
+        
+        # Check PR-AUC improvement
+        pr_auc_improvement = new_performance['pr_auc'] - existing_performance['pr_auc']
+        min_improvement = self.performance_thresholds['min_pr_auc_improvement']
+        
+        if pr_auc_improvement < min_improvement:
+            return False, f"Insufficient PR-AUC improvement ({pr_auc_improvement:.4f} < {min_improvement})"
+        
+        # Check combined score improvement
+        combined_improvement = new_performance['combined_score'] - existing_performance['combined_score']
+        
+        if combined_improvement <= 0:
+            return False, f"No improvement in combined score ({combined_improvement:.4f})"
+        
+        # All checks passed - save the new model
+        improvement_pct = (pr_auc_improvement / existing_performance['pr_auc']) * 100
+        return True, f"PR-AUC improved by {improvement_pct:.2f}% ({existing_performance['pr_auc']:.4f} → {new_performance['pr_auc']:.4f})"
     
     async def retrain_model(self, period: str) -> Dict[str, Any]:
         """
@@ -171,30 +310,63 @@ class ModelTrainingService:
             
             logger.info(f"✅ Model training completed in {training_time:.2f} seconds")
             
-            # Step 5: Evaluate model
+            # Step 5: Evaluate existing model first
+            logger.info("📊 Evaluating existing model performance...")
+            existing_performance = self.evaluate_existing_model(period, X_val, y_val)
+            
+            # Step 6: Evaluate new model
             val_loss = model.evaluate(X_val, y_val, verbose=0)
             val_predictions = model.predict(X_val, verbose=0)
             
-            # Calculate additional metrics
+            # Calculate comprehensive metrics for new model
             from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
             
-            val_pred_binary = (val_predictions > 0.5).astype(int)
+            val_pred_binary = (val_predictions > 0.5).astype(int).flatten()
+            val_pred_proba = val_predictions.flatten()
             
-            result['model_performance'] = {
+            new_performance = {
                 'validation_loss': float(val_loss),
                 'accuracy': float(accuracy_score(y_val, val_pred_binary)),
-                'precision': float(precision_score(y_val, val_pred_binary, average='weighted')),
-                'recall': float(recall_score(y_val, val_pred_binary, average='weighted')),
-                'f1_score': float(f1_score(y_val, val_pred_binary, average='weighted'))
+                'precision': float(precision_score(y_val, val_pred_binary, average='weighted', zero_division=0)),
+                'recall': float(recall_score(y_val, val_pred_binary, average='weighted', zero_division=0)),
+                'f1_score': float(f1_score(y_val, val_pred_binary, average='weighted', zero_division=0)),
+                'pr_auc': float(average_precision_score(y_val, val_pred_proba)),
+                'roc_auc': float(roc_auc_score(y_val, val_pred_proba)) if len(np.unique(y_val)) > 1 else 0.5
             }
             
-            logger.info(f"📊 Model performance: {result['model_performance']}")
+            # Calculate combined performance score
+            new_performance['combined_score'] = (
+                new_performance['pr_auc'] * self.performance_thresholds['weight_pr_auc'] +
+                new_performance['accuracy'] * self.performance_thresholds['weight_accuracy']
+            )
             
-            # Step 6: Save model and scaler
-            await self.save_model_artifacts(model, scaler, period, config)
+            result['model_performance'] = new_performance
+            result['existing_performance'] = existing_performance
             
-            # Step 7: Reload the corresponding service
-            await self.reload_prediction_service(period)
+            logger.info(f"📊 New {period} model performance:")
+            logger.info(f"    PR-AUC: {new_performance['pr_auc']:.4f}")
+            logger.info(f"    Accuracy: {new_performance['accuracy']:.4f}")
+            logger.info(f"    Combined Score: {new_performance['combined_score']:.4f}")
+            
+            # Step 7: Decide whether to save the new model
+            should_save, reason = self.should_save_new_model(existing_performance, new_performance, period)
+            
+            result['model_saved'] = should_save
+            result['save_decision_reason'] = reason
+            
+            if should_save:
+                logger.info(f"✅ Saving new {period} model: {reason}")
+                
+                # Save model and scaler
+                await self.save_model_artifacts(model, scaler, period, config)
+                
+                # Reload the corresponding service
+                await self.reload_prediction_service(period)
+                
+                result['model_improvement'] = True
+            else:
+                logger.info(f"❌ Not saving new {period} model: {reason}")
+                result['model_improvement'] = False
             
             result['success'] = True
             result['end_time'] = datetime.now().isoformat()
@@ -398,10 +570,50 @@ class ModelTrainingService:
         ]
         return callbacks
     
+    def backup_existing_model(self, period: str, config: Dict[str, Any]) -> bool:
+        """
+        Create a backup of existing model before replacing it
+        
+        Args:
+            period: Model period ('1m', '3m', '6m')
+            config: Model configuration
+            
+        Returns:
+            bool: True if backup successful or no existing model, False on error
+        """
+        try:
+            model_path = config['model_path']
+            scaler_path = config['scaler_path']
+            
+            # Check if existing files exist
+            if not os.path.exists(model_path) or not os.path.exists(scaler_path):
+                logger.info(f"📁 No existing {period} model to backup")
+                return True
+            
+            # Create backup paths with timestamp
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            backup_model_path = f"{model_path}.backup_{timestamp}"
+            backup_scaler_path = f"{scaler_path}.backup_{timestamp}"
+            
+            # Copy existing files to backup locations
+            import shutil
+            shutil.copy2(model_path, backup_model_path)
+            shutil.copy2(scaler_path, backup_scaler_path)
+            
+            logger.info(f"💾 Backed up existing {period} model:")
+            logger.info(f"    Model: {backup_model_path}")
+            logger.info(f"    Scaler: {backup_scaler_path}")
+            
+            return True
+            
+        except Exception as e:
+            logger.error(f"❌ Error backing up existing {period} model: {str(e)}")
+            return False
+    
     async def save_model_artifacts(self, model: tf.keras.Model, scaler: StandardScaler, 
                                  period: str, config: Dict[str, Any]):
         """
-        Save trained model and scaler to disk
+        Save trained model and scaler to disk (with backup of existing model)
         
         Args:
             model: Trained Keras model
@@ -417,13 +629,17 @@ class ModelTrainingService:
             os.makedirs(model_dir, exist_ok=True)
             os.makedirs(scaler_dir, exist_ok=True)
             
-            # Save model
-            model.save(config['model_path'])
-            logger.info(f"✅ Model saved: {config['model_path']}")
+            # Backup existing model
+            if not self.backup_existing_model(period, config):
+                logger.warning(f"⚠️ Failed to backup existing {period} model, proceeding anyway")
             
-            # Save scaler
+            # Save new model
+            model.save(config['model_path'])
+            logger.info(f"✅ New model saved: {config['model_path']}")
+            
+            # Save new scaler
             joblib.dump(scaler, config['scaler_path'])
-            logger.info(f"✅ Scaler saved: {config['scaler_path']}")
+            logger.info(f"✅ New scaler saved: {config['scaler_path']}")
             
         except Exception as e:
             logger.error(f"❌ Error saving model artifacts: {str(e)}")
