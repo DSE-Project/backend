@@ -95,6 +95,36 @@ class DatabaseService:
         except Exception as e:
             logger.error(f"❌ Supabase connection test failed: {e}")
             return False
+        
+    def load_last_n_rows(self, table_name: str, n: int = 2) -> Optional[pd.DataFrame]:
+        try:
+            # Query last n rows ordered descending
+            response = (
+                self.supabase
+                .table(table_name)
+                .select("*")
+                .order("observation_date", desc=True)
+                .limit(n)
+                .execute()
+            )
+
+            if response.data:
+                df = pd.DataFrame(response.data)
+                df['observation_date'] = pd.to_datetime(df['observation_date'])
+                df.set_index('observation_date', inplace=True)
+
+                # Sort ascending so the last rows are at the bottom
+                df = df.sort_index()
+                logger.info(f"✅ Loaded last {n} rows from {table_name}")
+                return df
+            else:
+                logger.warning(f"⚠️ No data found in {table_name}")
+                return None
+
+        except Exception as e:
+            logger.error(f"❌ Failed to load last {n} rows from {table_name}: {e}")
+            return None
+
 
 # Global database service instance
 db_service = DatabaseService()

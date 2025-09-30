@@ -10,6 +10,7 @@ import pdfkit
 from pydantic import BaseModel
 from fastapi import FastAPI, Query
 from fastapi.responses import StreamingResponse
+from fastapi import HTTPException
 
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -28,6 +29,8 @@ from api.v1.economic_charts import router as economic_charts_router
 from fastapi.responses import StreamingResponse
 from api.v1 import economic
 from io import BytesIO
+from services.database_service import db_service
+
 
 config = pdfkit.configuration(wkhtmltopdf=r"C:\\Program Files\\wkhtmltopdf\\bin\\wkhtmltopdf.exe")
 
@@ -178,6 +181,19 @@ async def generate_report(url: str = Query(...)):
         media_type="application/pdf",
         headers={"Content-Disposition": "attachment; filename={filename}"}
     )
+
+@app.get("/last-two/{table_name}")
+def get_last_two(table_name: str):
+    try:
+        df = db_service.load_last_n_rows(table_name, n=2)
+        if df is None or df.empty:
+            raise HTTPException(status_code=404, detail="No data found")
+        
+        # Convert dataframe to JSON
+        return df.reset_index().to_dict(orient="records")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 if __name__ == "__main__":
     import uvicorn
