@@ -89,7 +89,9 @@ async def read_root():
             "economic_charts": "/api/v1/economic-charts/historical-data",
             "chart_statistics": "/api/v1/economic-charts/summary-stats",
             "scheduler_status": "/api/v1/scheduler/status",
-            "scheduler_health": "/api/v1/scheduler/health"
+            "scheduler_health": "/api/v1/scheduler/health",
+            "cache_stats": "/api/v1/forecast/cache/stats",
+            "cache_clear": "/api/v1/forecast/cache/clear"
         }
     }
 

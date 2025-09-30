@@ -383,8 +383,8 @@ async def get_latest_prediction_1m() -> ForecastResponse1M:
         
         # Step 3: Determine data source and fetch accordingly
         if db_latest_date and fred_latest_date == db_latest_date:
-            # Dates match - use database data
-            logger.info("Using existing database data (dates match)")
+            # ✅ OPTIMAL PATH - Use database data (fast, scheduler working correctly)
+            logger.info("✅ Using existing database data (dates match) - scheduler working correctly")
             latest_row = get_latest_database_row()
             if not latest_row:
                 raise RuntimeError("Failed to get latest row from database")
@@ -393,8 +393,9 @@ async def get_latest_prediction_1m() -> ForecastResponse1M:
             features = convert_to_input_features(latest_row)
             
         else:
-            # Dates don't match or no DB data - fetch from FRED
-            logger.info("Fetching new data from FRED API (dates don't match)")
+            # ⚠️ FALLBACK PATH - Fetch from FRED (slower, scheduler may need attention)
+            logger.warning(f"⚠️ Fetching new data from FRED API - dates don't match (FRED: {fred_latest_date}, DB: {db_latest_date})")
+            logger.info("This suggests the scheduler may not be running or needs attention")
             fred_data = await fetch_all_fred_data()
             if not fred_data:
                 # Fallback to database if available
