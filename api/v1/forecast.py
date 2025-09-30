@@ -343,3 +343,15 @@ async def invalidate_timeframe_cache(timeframe: str):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to invalidate cache: {str(e)}")
 
+# Priority management endpoints
+@router.get("/priority/stats")
+async def get_priority_stats():
+    """Get request priority statistics"""
+    from utils.request_priority import priority_manager
+    
+    return {
+        "status": "success",
+        "priority_stats": priority_manager.get_stats(),
+        "message": "Priority statistics retrieved successfully"
+    }
+
