@@ -6,6 +6,7 @@ from typing import Optional, Dict, Any
 import logging
 from services.database_service import db_service
 from services.forecast_service_6m import predict_6m, initialize_6m_service
+from services.shared_fred_date_service import shared_fred_date_service
 from schemas.forecast_schema_6m import InputFeatures6M, CurrentMonthData6M, ForecastResponse6M
 
 logger = logging.getLogger(__name__)
@@ -126,16 +127,12 @@ async def fetch_monthly_average_for_weekly_series_6m(series_id: str, target_date
         return None
 
 async def get_fred_latest_date_6m() -> Optional[str]:
-    """Get the latest observation date from FRED API using FEDFUNDS series"""
+    """Get the latest observation date from FRED API using shared service"""
     try:
-        data = await fetch_latest_observation_6m(SERIES_IDS_6M["fedfunds"])
-        if data and "observations" in data and len(data["observations"]) > 0:
-            latest_date = data["observations"][0]["date"]
-            logger.info(f"Latest FRED date for 6M: {latest_date}")
-            return latest_date
-        return None
+        logger.info("Getting latest FRED date for 6M using shared service")
+        return await shared_fred_date_service.get_latest_fred_date()
     except Exception as e:
-        logger.error(f"Failed to fetch latest FRED date for 6M: {e}")
+        logger.error(f"Failed to get latest FRED date for 6M from shared service: {e}")
         return None
 
 def get_database_latest_date_6m() -> Optional[str]:

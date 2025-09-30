@@ -7,6 +7,7 @@ import logging
 import asyncio
 from services.database_service import db_service
 from services.forecast_service_1m import predict_1m, initialize_1m_service
+from services.shared_fred_date_service import shared_fred_date_service
 from schemas.forecast_schema_1m import InputFeatures1M, CurrentMonthData1M, ForecastResponse1M
 
 logger = logging.getLogger(__name__)
@@ -104,30 +105,12 @@ async def fetch_latest_observation(series_id: str, timeout: int = 30, max_retrie
                 raise Exception(f"Unexpected error after {max_retries} attempts: {e}")
 
 async def get_fred_latest_date() -> Optional[str]:
-    """Get the latest observation date from FRED API using FEDFUNDS series"""
+    """Get the latest observation date from FRED API using shared service"""
     try:
-        logger.info("Fetching latest FRED date using FEDFUNDS series")
-        data = await fetch_latest_observation(SERIES_IDS["fedfunds"])
-        
-        if not data:
-            logger.error("No data returned from FRED API")
-            return None
-            
-        if "observations" not in data:
-            logger.error(f"No observations in FRED response: {data}")
-            return None
-            
-        observations = data["observations"]
-        if len(observations) == 0:
-            logger.error("Empty observations array from FRED API")
-            return None
-            
-        latest_date = observations[0]["date"]
-        logger.info(f"Latest FRED date: {latest_date}")
-        return latest_date
-        
+        logger.info("Getting latest FRED date using shared service")
+        return await shared_fred_date_service.get_latest_fred_date()
     except Exception as e:
-        logger.error(f"Failed to fetch latest FRED date: {type(e).__name__}: {str(e)}")
+        logger.error(f"Failed to get latest FRED date from shared service: {type(e).__name__}: {str(e)}")
         return None
 
 def get_database_latest_date() -> Optional[str]:

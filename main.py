@@ -78,6 +78,23 @@ app.include_router(economic.router, prefix="/api/v1/economic")
 app.include_router(sentiment_router, prefix="/api/v1/sentiment", tags=["Sentiment Analysis"])
 app.include_router(scheduler_router, prefix="/api/v1", tags=["FRED Data Scheduler"])
 
+# FRED Cache monitoring endpoint
+from services.shared_fred_date_service import shared_fred_date_service
+
+@app.get("/api/v1/fred-cache/status", tags=["FRED Cache"])
+async def get_fred_cache_status():
+    """Get the current status of the FRED date cache"""
+    return {
+        "cache_info": shared_fred_date_service.get_cache_info(),
+        "description": "Shows whether FRED date is cached and cache validity"
+    }
+
+@app.post("/api/v1/fred-cache/clear", tags=["FRED Cache"])
+async def clear_fred_cache():
+    """Clear the FRED date cache (for testing purposes)"""
+    shared_fred_date_service.clear_cache()
+    return {"message": "FRED date cache cleared successfully"}
+
 @app.get("/", tags=["Root"])
 async def read_root():
     """Welcome endpoint with API information"""
