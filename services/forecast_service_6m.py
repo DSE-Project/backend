@@ -85,7 +85,7 @@ def preprocess_features_6m(features: InputFeatures6M, lookback_points=120) -> tu
                 raise RuntimeError("Failed to load historical data")
         # Keep only the last lookback_points for memory efficiency
 
-        historical_data = historical_data_6m.tail(lookback_points).copy()
+        historical_data = historical_data_6m.tail(lookback_points+1).iloc[:-1].copy()
         
         # Convert all to float32 for memory efficiency
         historical_data = historical_data.astype(np.float32)
