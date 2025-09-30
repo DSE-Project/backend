@@ -30,6 +30,7 @@ from fastapi.responses import StreamingResponse
 from api.v1 import economic
 from io import BytesIO
 from services.database_service import db_service
+from middleware.priority_middleware import PriorityMiddleware
 
 
 config = pdfkit.configuration(wkhtmltopdf=r"C:\\Program Files\\wkhtmltopdf\\bin\\wkhtmltopdf.exe")
@@ -64,12 +65,14 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Add priority request middleware (should be after CORS)
+app.add_middleware(PriorityMiddleware, enable_logging=True)
+
 # Include the routers
 app.include_router(forecast_router, prefix="/api/v1/forecast", tags=["Forecasting"])
 app.include_router(yearly_risk_router, prefix="/api/v1", tags=["yearly-risk"])
 app.include_router(macro_indicators_router, prefix="/api/v1", tags=["macro-indicators"])
 app.include_router(economic_charts_router, prefix="/api/v1", tags=["economic-charts"])
-app.include_router(yearly_risk_router, prefix="/api/v1", tags=["yearly-risk"])
 app.include_router(simulate_router, prefix="/api/v1/simulate", tags=["Simulation"])
 app.include_router(economic.router, prefix="/api/v1/economic")
 app.include_router(sentiment_router, prefix="/api/v1/sentiment", tags=["Sentiment Analysis"])
@@ -94,7 +97,8 @@ async def read_root():
             "scheduler_status": "/api/v1/scheduler/status",
             "scheduler_health": "/api/v1/scheduler/health",
             "cache_stats": "/api/v1/forecast/cache/stats",
-            "cache_clear": "/api/v1/forecast/cache/clear"
+            "cache_clear": "/api/v1/forecast/cache/clear",
+            "priority_stats": "/api/v1/forecast/priority/stats"
         }
     }
 
