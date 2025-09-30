@@ -32,6 +32,7 @@ from io import BytesIO
 config = pdfkit.configuration(wkhtmltopdf=r"C:\\Program Files\\wkhtmltopdf\\bin\\wkhtmltopdf.exe")
 
 from api.v1.sentiment_component import router as sentiment_router
+from api.v1.scheduler import router as scheduler_router
 
 from dotenv import load_dotenv
 
@@ -69,6 +70,7 @@ app.include_router(yearly_risk_router, prefix="/api/v1", tags=["yearly-risk"])
 app.include_router(simulate_router, prefix="/api/v1/simulate", tags=["Simulation"])
 app.include_router(economic.router, prefix="/api/v1/economic")
 app.include_router(sentiment_router, prefix="/api/v1/sentiment", tags=["Sentiment Analysis"])
+app.include_router(scheduler_router, prefix="/api/v1", tags=["FRED Data Scheduler"])
 
 @app.get("/", tags=["Root"])
 async def read_root():
@@ -85,7 +87,9 @@ async def read_root():
             "yearly_risk": "/api/v1/yearly-risk",
             "macro_indicators": "/api/v1/macro-indicators",
             "economic_charts": "/api/v1/economic-charts/historical-data",
-            "chart_statistics": "/api/v1/economic-charts/summary-stats"
+            "chart_statistics": "/api/v1/economic-charts/summary-stats",
+            "scheduler_status": "/api/v1/scheduler/status",
+            "scheduler_health": "/api/v1/scheduler/health"
         }
     }
 
@@ -103,6 +107,7 @@ async def startup_event():
         from services.forecast_service_1m import initialize_1m_service
         from services.forecast_service_3m import initialize_3m_service
         from services.forecast_service_6m import initialize_6m_service
+        from services.fred_data_scheduler import fred_scheduler
 
         
         print("\n🚀 Initializing forecasting services...")
@@ -124,9 +129,29 @@ async def startup_event():
         else:
             print("⚠️ 6M forecasting service failed to initialize")
         
+        # Initialize FRED Data Scheduler
+        print("\n📅 Initializing FRED Data Scheduler...")
+        try:
+            await fred_scheduler.start_scheduler()
+            print("✅ FRED Data Scheduler initialized successfully")
+        except Exception as scheduler_error:
+            print(f"⚠️ Warning: FRED Data Scheduler failed to initialize: {scheduler_error}")
 
     except Exception as e:
         print(f"⚠️ Warning: Could not initialize some services: {e}")
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    """Cleanup services on shutdown"""
+    try:
+        from services.fred_data_scheduler import fred_scheduler
+        
+        print("\n🛑 Shutting down services...")
+        await fred_scheduler.stop_scheduler()
+        print("✅ FRED Data Scheduler stopped successfully")
+        
+    except Exception as e:
+        print(f"⚠️ Warning: Error during shutdown: {e}")
 
 class ReportRequest(BaseModel):
     htmlContent: str
