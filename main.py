@@ -9,6 +9,24 @@ from api.v1.yearly_risk import router as yearly_risk_router
 from api.v1.macro_indicators import router as macro_indicators_router
 from api.v1.economic_charts import router as economic_charts_router
 
+from fastapi.responses import StreamingResponse
+from api.v1 import economic
+from io import BytesIO
+
+# config = pdfkit.configuration(wkhtmltopdf=r"C:\\Program Files\\wkhtmltopdf\\bin\\wkhtmltopdf.exe")
+
+from api.v1.sentiment_component import router as sentiment_router
+from api.v1.scheduler import router as scheduler_router
+
+from dotenv import load_dotenv
+
+env_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
+if os.path.exists(env_path):
+    load_dotenv(dotenv_path=env_path)
+else:
+    print("⚠️ .env file not found. Make sure to create one with SUPABASE_URL and SUPABASE_ANON_KEY")
+
+
 # Create the FastAPI app instance
 app = FastAPI(
     title="RecessionScope API",
@@ -33,6 +51,13 @@ app.include_router(yearly_risk_router, prefix="/api/v1", tags=["yearly-risk"])
 app.include_router(macro_indicators_router, prefix="/api/v1", tags=["macro-indicators"])
 app.include_router(economic_charts_router, prefix="/api/v1", tags=["economic-charts"])
 
+app.include_router(yearly_risk_router, prefix="/api/v1", tags=["yearly-risk"])
+app.include_router(simulate_router, prefix="/api/v1/simulate", tags=["Simulation"])
+app.include_router(economic.router, prefix="/api/v1/economic")
+app.include_router(sentiment_router, prefix="/api/v1/sentiment", tags=["Sentiment Analysis"])
+app.include_router(scheduler_router, prefix="/api/v1", tags=["FRED Data Scheduler"])
+
+
 @app.get("/", tags=["Root"])
 async def read_root():
     """Welcome endpoint with API information"""
@@ -48,7 +73,11 @@ async def read_root():
             "yearly_risk": "/api/v1/yearly-risk",
             "macro_indicators": "/api/v1/macro-indicators",
             "economic_charts": "/api/v1/economic-charts/historical-data",
-            "chart_statistics": "/api/v1/economic-charts/summary-stats"
+            "chart_statistics": "/api/v1/economic-charts/summary-stats",
+            "scheduler_status": "/api/v1/scheduler/status",
+            "scheduler_health": "/api/v1/scheduler/health",
+            "cache_stats": "/api/v1/forecast/cache/stats",
+            "cache_clear": "/api/v1/forecast/cache/clear"
         }
     }
 
@@ -66,6 +95,7 @@ async def startup_event():
         from services.forecast_service_1m import initialize_1m_service
         from services.forecast_service_3m import initialize_3m_service
         from services.forecast_service_6m import initialize_6m_service
+        from services.fred_data_scheduler import fred_scheduler
 
         
         print("\n🚀 Initializing forecasting services...")
@@ -87,9 +117,54 @@ async def startup_event():
         else:
             print("⚠️ 6M forecasting service failed to initialize")
         
+        # Initialize FRED Data Scheduler
+        print("\n📅 Initializing FRED Data Scheduler...")
+        try:
+            await fred_scheduler.start_scheduler()
+            print("✅ FRED Data Scheduler initialized successfully")
+        except Exception as scheduler_error:
+            print(f"⚠️ Warning: FRED Data Scheduler failed to initialize: {scheduler_error}")
 
     except Exception as e:
         print(f"⚠️ Warning: Could not initialize some services: {e}")
+
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    """Cleanup services on shutdown"""
+    try:
+        from services.fred_data_scheduler import fred_scheduler
+        
+        print("\n🛑 Shutting down services...")
+        await fred_scheduler.stop_scheduler()
+        print("✅ FRED Data Scheduler stopped successfully")
+        
+    except Exception as e:
+        print(f"⚠️ Warning: Error during shutdown: {e}")
+
+class ReportRequest(BaseModel):
+    htmlContent: str
+
+# @app.post("/generate-report")
+# async def generate_report(request: ReportRequest):
+#     pdf_bytes = pdfkit.from_string(request.htmlContent, False, configuration=config)
+#     pdf_file = BytesIO(pdf_bytes)
+#     pdf_file.seek(0)
+#     return StreamingResponse(
+#         pdf_file,
+#         media_type="application/pdf",
+#         headers={"Content-Disposition": "attachment; filename=report.pdf"}
+#     )
+
+@app.get("/generate-report")
+async def generate_report(url: str = Query(...)):
+    # Playwright can now access the public /reports-print route
+    pdf_file = await run_in_threadpool(render_url_to_pdf_sync, url)
+    return StreamingResponse(
+        pdf_file,
+        media_type="application/pdf",
+        headers={"Content-Disposition": "attachment; filename={filename}"}
+    )
 
 if __name__ == "__main__":
     import uvicorn
