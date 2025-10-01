@@ -1,7 +1,3 @@
-"""
-Prediction caching utility for recession forecast endpoints
-Caches prediction responses for 1 hour to improve performance and user experience
-"""
 import time
 from typing import Dict, Any, Optional
 from datetime import datetime, timedelta
@@ -13,7 +9,7 @@ logger = logging.getLogger(__name__)
 class PredictionCache:
     """Thread-safe in-memory cache for prediction responses"""
     
-    def __init__(self, default_ttl_seconds: int = 3600):  # 1 hour default
+    def __init__(self, default_ttl_seconds: int = 36000): 
         self.cache: Dict[str, Dict[str, Any]] = {}
         self.default_ttl = default_ttl_seconds
         self._lock = threading.RLock()

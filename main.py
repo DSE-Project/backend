@@ -1,5 +1,19 @@
 import sys
 import os
+
+import asyncio
+
+# Fix for Playwright on Windows (NotImplementedError)
+if sys.platform.startswith("win"):
+    asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
+
+import pdfkit
+from pydantic import BaseModel
+from fastapi import FastAPI, Query
+from fastapi.responses import StreamingResponse
+from fastapi import HTTPException
+
+
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from fastapi import FastAPI, Query
@@ -16,6 +30,14 @@ from api.v1.yearly_risk import router as yearly_risk_router
 from api.v1.macro_indicators import router as macro_indicators_router
 from api.v1.economic_charts import router as economic_charts_router
 from api.v1 import economic
+
+from io import BytesIO
+from services.database_service import db_service
+from middleware.priority_middleware import PriorityMiddleware
+
+
+config = pdfkit.configuration(wkhtmltopdf=r"C:\\Program Files\\wkhtmltopdf\\bin\\wkhtmltopdf.exe")
+
 from api.v1.sentiment_component import router as sentiment_router
 from api.v1.scheduler import router as scheduler_router
 from api.v1.simulate import router as simulate_router
@@ -45,8 +67,13 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Include the forecast router
-app.include_router(forecast.router, prefix="/api/v1/forecast", tags=["Forecasting"])
+
+# Add priority request middleware (should be after CORS)
+app.add_middleware(PriorityMiddleware, enable_logging=True)
+
+# Include the routers
+app.include_router(forecast_router, prefix="/api/v1/forecast", tags=["Forecasting"])
+
 app.include_router(yearly_risk_router, prefix="/api/v1", tags=["yearly-risk"])
 app.include_router(macro_indicators_router, prefix="/api/v1", tags=["macro-indicators"])
 app.include_router(economic_charts_router, prefix="/api/v1", tags=["economic-charts"])
@@ -54,6 +81,23 @@ app.include_router(simulate_router, prefix="/api/v1/simulate", tags=["Simulation
 app.include_router(economic.router, prefix="/api/v1/economic")
 app.include_router(sentiment_router, prefix="/api/v1/sentiment", tags=["Sentiment Analysis"])
 app.include_router(scheduler_router, prefix="/api/v1", tags=["FRED Data Scheduler"])
+
+# FRED Cache monitoring endpoint
+from services.shared_fred_date_service import shared_fred_date_service
+
+@app.get("/api/v1/fred-cache/status", tags=["FRED Cache"])
+async def get_fred_cache_status():
+    """Get the current status of the FRED date cache"""
+    return {
+        "cache_info": shared_fred_date_service.get_cache_info(),
+        "description": "Shows whether FRED date is cached and cache validity"
+    }
+
+@app.post("/api/v1/fred-cache/clear", tags=["FRED Cache"])
+async def clear_fred_cache():
+    """Clear the FRED date cache (for testing purposes)"""
+    shared_fred_date_service.clear_cache()
+    return {"message": "FRED date cache cleared successfully"}
 
 @app.get("/", tags=["Root"])
 async def read_root():
@@ -79,6 +123,10 @@ async def read_root():
             "fred_cache_clear": "/api/v1/macro-indicators/cache/clear",
             "economic_charts_cache_stats": "/api/v1/economic-charts/cache/stats",
             "economic_charts_cache_clear": "/api/v1/economic-charts/cache/clear"
+            "cache_stats": "/api/v1/forecast/cache/stats",
+            "cache_clear": "/api/v1/forecast/cache/clear",
+            "priority_stats": "/api/v1/forecast/priority/stats"
+
         }
     }
 
@@ -170,6 +218,19 @@ class ReportRequest(BaseModel):
 #     #     headers={"Content-Disposition": "attachment; filename=report.pdf"}
 #     # )
 #     return {"message": "PDF generation from URL not implemented yet", "url": url}
+
+@app.get("/last-two/{table_name}")
+def get_last_two(table_name: str):
+    try:
+        df = db_service.load_last_n_rows(table_name, n=2)
+        if df is None or df.empty:
+            raise HTTPException(status_code=404, detail="No data found")
+        
+        # Convert dataframe to JSON
+        return df.reset_index().to_dict(orient="records")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 if __name__ == "__main__":
     import uvicorn

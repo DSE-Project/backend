@@ -10,3 +10,4 @@ def get_csv():
     if not csv_path.exists():
         return {"error": f"CSV file not found at {csv_path}"}
     return FileResponse(csv_path, media_type="text/csv", filename="historical_data_1m.csv")
+
