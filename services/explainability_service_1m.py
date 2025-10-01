@@ -19,6 +19,12 @@ class ExplainabilityService1M:
         self.explainer = None
         self.background_data = None
         
+    def clear_explainer_cache(self):
+        """Force reinitialization of the SHAP explainer"""
+        self.explainer = None
+        self.background_data = None
+        print("🔄 SHAP explainer cache cleared - will reinitialize on next use")
+        
     def initialize_explainer(self, seq_length=60, num_background_samples=100):
         """Initialize SHAP explainer with background data"""
         try:
@@ -84,11 +90,19 @@ class ExplainabilityService1M:
             self.background_data = np.array(sequences[:num_background_samples])
             self.feature_names = feature_cols
             
-            # Initialize SHAP explainer with GradientExplainer for deep learning models
-            self.explainer = shap.GradientExplainer(model_1m, self.background_data)
-            
-            print(f"✅ SHAP explainer initialized with {len(self.background_data)} background samples")
-            return True
+            # Initialize SHAP explainer with GradientExplainer (most compatible with TensorFlow)
+            try:
+                self.explainer = shap.GradientExplainer(model_1m, self.background_data)
+                print(f"✅ SHAP GradientExplainer initialized with {len(self.background_data)} background samples")
+                return True
+            except Exception as e:
+                print(f"⚠️  GradientExplainer failed: {e}")
+                print("🔄 Falling back to simpler feature attribution method...")
+                
+                # Simple feature attribution using input gradients
+                self.explainer = "simple_gradients"
+                print(f"✅ Simple gradient attribution initialized")
+                return True
             
         except Exception as e:
             print(f"❌ Error initializing SHAP explainer: {e}")
@@ -116,26 +130,47 @@ class ExplainabilityService1M:
             # Get the latest sequence
             latest_sequence = X_scaled[-seq_length:].reshape(1, seq_length, -1)
             
-            # Calculate SHAP values
-            shap_values = self.explainer.shap_values(latest_sequence)
+            # Calculate SHAP values using the appropriate method
+            if self.explainer == "simple_gradients":
+                # Fallback: Simple gradient-based importance calculation
+                import tensorflow as tf
+                with tf.GradientTape() as tape:
+                    tape.watch(latest_sequence)
+                    prediction = model_1m(latest_sequence)
+                
+                # Calculate gradients
+                gradients = tape.gradient(prediction, latest_sequence)
+                # Average across time steps and take absolute value for importance
+                shap_values_mean = np.mean(np.abs(gradients[0].numpy()), axis=0)
+                
+            else:
+                # Use GradientExplainer
+                shap_values = self.explainer.shap_values(latest_sequence)
+                
+                # Process SHAP values for the sequence
+                if isinstance(shap_values, list):
+                    shap_values = shap_values[0]
+                
+                # Average across time dimension (keep sign for directional impact)
+                shap_values_mean = np.mean(shap_values[0], axis=0)
             
-            # Process SHAP values for the sequence
-            # Average across time steps to get feature importance
-            if isinstance(shap_values, list):
-                shap_values = shap_values[0]
+            # Ensure it's a flat array
+            if len(shap_values_mean.shape) > 1:
+                shap_values_mean = shap_values_mean.flatten()
             
-            # Average across time dimension
-            shap_values_mean = np.mean(np.abs(shap_values[0]), axis=0)
-            
-            # Get top 10 features - ensure indices are integers
-            top_indices = np.argsort(shap_values_mean)[-10:][::-1]
+            # Get top 10 features by absolute importance but keep original values
+            abs_values = np.abs(shap_values_mean)
+            top_indices = np.argsort(abs_values)[-10:][::-1]
             top_indices = [int(idx) for idx in top_indices]  # Convert to int
             
             top_features = []
             for idx in top_indices:
+                feature_name = feature_cols[idx] if idx < len(feature_cols) else f"unknown_{idx}"
+                importance_val = float(shap_values_mean[idx])
+                
                 top_features.append({
-                    "feature": feature_cols[idx],
-                    "importance": float(shap_values_mean[idx]),
+                    "feature": feature_name,
+                    "importance": importance_val,  # Keep sign for directional impact
                     "value": float(latest_sequence[0, -1, idx])  # Latest value
                 })
             

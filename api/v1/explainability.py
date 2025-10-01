@@ -5,9 +5,9 @@ import logging
 from services.fred_data_service_1m import get_latest_database_row, convert_to_input_features
 from services.fred_data_service_3m import get_latest_database_row_3m, convert_to_input_features_3m
 from services.fred_data_service_6m import get_latest_database_row_6m, convert_to_input_features_6m
-from services.explainability_service_1m import get_explanation_1m
-from services.explainability_service_3m import get_explanation_3m
-from services.explainability_service_6m import get_explanation_6m
+from services.explainability_service_1m import get_explanation_1m, explainability_service_1m
+from services.explainability_service_3m import get_explanation_3m, explainability_service_3m
+from services.explainability_service_6m import get_explanation_6m, explainability_service_6m
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -114,3 +114,20 @@ async def explain_all_predictions():
     except Exception as e:
         logger.error(f"Error generating all explanations: {e}")
         raise HTTPException(status_code=500, detail=f"Explanation generation failed: {str(e)}")
+
+@router.post("/debug/clear-cache", response_model=Dict)
+async def clear_explainer_cache():
+    """Debug endpoint to clear SHAP explainer cache and force reinitialization"""
+    try:
+        explainability_service_1m.clear_explainer_cache()
+        explainability_service_3m.clear_explainer_cache()
+        explainability_service_6m.clear_explainer_cache()
+        
+        return {
+            "message": "SHAP explainer cache cleared for all timeframes",
+            "status": "success"
+        }
+        
+    except Exception as e:
+        logger.error(f"Error clearing explainer cache: {e}")
+        raise HTTPException(status_code=500, detail=f"Cache clear failed: {str(e)}")
