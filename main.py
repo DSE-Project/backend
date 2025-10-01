@@ -11,6 +11,7 @@ from pydantic import BaseModel
 from fastapi import FastAPI, Query
 from fastapi.responses import StreamingResponse
 from fastapi import HTTPException
+
 import base64
 
 
@@ -122,6 +123,12 @@ async def read_root():
             "chart_statistics": "/api/v1/economic-charts/summary-stats",
             "scheduler_status": "/api/v1/scheduler/status",
             "scheduler_health": "/api/v1/scheduler/health",
+            "prediction_cache_stats": "/api/v1/forecast/cache/stats",
+            "prediction_cache_clear": "/api/v1/forecast/cache/clear",
+            "fred_cache_stats": "/api/v1/macro-indicators/cache/stats",
+            "fred_cache_clear": "/api/v1/macro-indicators/cache/clear",
+            "economic_charts_cache_stats": "/api/v1/economic-charts/cache/stats",
+            "economic_charts_cache_clear": "/api/v1/economic-charts/cache/clear",
             "cache_stats": "/api/v1/forecast/cache/stats",
             "cache_clear": "/api/v1/forecast/cache/clear",
             "priority_stats": "/api/v1/forecast/priority/stats"
@@ -236,6 +243,19 @@ async def generate_report(url: str = Query(...), filename: str = Query("report.p
         media_type="application/pdf",
         headers={"Content-Disposition": f"attachment; filename={filename}"}
     )
+
+@app.get("/last-two/{table_name}")
+def get_last_two(table_name: str):
+    try:
+        df = db_service.load_last_n_rows(table_name, n=2)
+        if df is None or df.empty:
+            raise HTTPException(status_code=404, detail="No data found")
+        
+        # Convert dataframe to JSON
+        return df.reset_index().to_dict(orient="records")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 @app.get("/last-two/{table_name}")
 def get_last_two(table_name: str):
