@@ -25,7 +25,7 @@ from io import BytesIO
 from dotenv import load_dotenv
 
 # Import routers
-from api.v1 import forecast
+from api.v1.forecast import router as forecast_router
 from api.v1.yearly_risk import router as yearly_risk_router
 from api.v1.macro_indicators import router as macro_indicators_router
 from api.v1.economic_charts import router as economic_charts_router
@@ -35,8 +35,19 @@ from io import BytesIO
 from services.database_service import db_service
 from middleware.priority_middleware import PriorityMiddleware
 
-
-config = pdfkit.configuration(wkhtmltopdf=r"C:\\Program Files\\wkhtmltopdf\\bin\\wkhtmltopdf.exe")
+# Configure pdfkit for cross-platform compatibility
+# Try to find wkhtmltopdf automatically, or use None if not available
+try:
+    import shutil
+    wkhtmltopdf_path = shutil.which('wkhtmltopdf')
+    if wkhtmltopdf_path:
+        config = pdfkit.configuration(wkhtmltopdf=wkhtmltopdf_path)
+    else:
+        config = None
+        print("⚠️ wkhtmltopdf not found. PDF generation will not be available.")
+except Exception as e:
+    config = None
+    print(f"⚠️ Could not configure pdfkit: {e}")
 
 from api.v1.sentiment_component import router as sentiment_router
 from api.v1.scheduler import router as scheduler_router
@@ -122,7 +133,7 @@ async def read_root():
             "fred_cache_stats": "/api/v1/macro-indicators/cache/stats",
             "fred_cache_clear": "/api/v1/macro-indicators/cache/clear",
             "economic_charts_cache_stats": "/api/v1/economic-charts/cache/stats",
-            "economic_charts_cache_clear": "/api/v1/economic-charts/cache/clear"
+            "economic_charts_cache_clear": "/api/v1/economic-charts/cache/clear",
             "cache_stats": "/api/v1/forecast/cache/stats",
             "cache_clear": "/api/v1/forecast/cache/clear",
             "priority_stats": "/api/v1/forecast/priority/stats"
