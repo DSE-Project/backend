@@ -52,6 +52,7 @@ except Exception as e:
 from api.v1.sentiment_component import router as sentiment_router
 from api.v1.scheduler import router as scheduler_router
 from api.v1.simulate import router as simulate_router
+from api.v1.explainability import router as explainability_router
 
 # Load environment variables
 env_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
@@ -92,6 +93,7 @@ app.include_router(simulate_router, prefix="/api/v1/simulate", tags=["Simulation
 app.include_router(economic.router, prefix="/api/v1/economic")
 app.include_router(sentiment_router, prefix="/api/v1/sentiment", tags=["Sentiment Analysis"])
 app.include_router(scheduler_router, prefix="/api/v1", tags=["FRED Data Scheduler"])
+app.include_router(explainability_router, prefix="/api/v1/forecast", tags=["Model Explainability"])
 
 # FRED Cache monitoring endpoint
 from services.shared_fred_date_service import shared_fred_date_service
