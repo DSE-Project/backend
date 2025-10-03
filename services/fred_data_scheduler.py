@@ -95,7 +95,7 @@ class FREDDataScheduler:
         """Get series IDs for 3-month model - placeholder for now"""
         # Import from 3m service when available
         try:
-            from services.fred_data_service_3m import SERIES_IDS as SERIES_IDS_3M
+            from services.fred_data_service_3m import SERIES_IDS_3M 
             return SERIES_IDS_3M
         except ImportError:
             # Fallback to 1m series for now
