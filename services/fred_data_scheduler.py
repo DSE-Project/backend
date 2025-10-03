@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import httpx
+import os
 from datetime import datetime, timedelta, timezone
 from typing import Dict, Any, Optional, List, Tuple
 import pandas as pd
@@ -79,6 +80,13 @@ class FREDDataScheduler:
                 'series_ids': self._get_6m_series_ids(),
                 'service_module': 'services.fred_data_service_6m'
             }
+        }
+        
+        # Define quarterly series that need forward-filling
+        self.quarterly_series = {
+            '1m': ['GDP', 'REALGDP', 'PSTAX', 'COMREAL'],
+            '3m': ['GDP'],
+            '6m': ['GDP']
         }
         
         self._running = False
@@ -237,7 +245,11 @@ class FREDDataScheduler:
     
     async def check_and_update_timeframe_data(self, timeframe: str) -> Tuple[int, int]:
         """
-        Check and update data for a specific timeframe
+        Enhanced method to check and update data for a specific timeframe
+        - Fetches 12 months of data from both database and FRED
+        - Handles back revisions properly
+        - Supports quarterly data forward-filling
+        - Creates records with NaN for missing values instead of waiting for 80% completion
         
         Returns:
             Tuple of (records_updated, records_created)
@@ -249,43 +261,58 @@ class FREDDataScheduler:
         table_name = config['table']
         series_ids = config['series_ids']
         
-        logger.info(f"Checking {len(series_ids)} series for {timeframe} data")
+        logger.info(f"🔄 Enhanced update check for {timeframe} - {len(series_ids)} series")
         logger.debug(f"Series for {timeframe}: {list(series_ids.keys())}")
         
-        # Get latest database date for this timeframe
-        db_latest_date = await self.get_database_latest_date(table_name)
-        if not db_latest_date:
-            logger.warning(f"No data found in {table_name}")
+        # Get last 12 months from database for back revision checking
+        db_records = await self.get_database_last_12_months(table_name)
+        if not db_records:
+            logger.warning(f"No historical data found in {table_name}")
+            # Still proceed to try creating initial data
+        
+        # Fetch 12 months of FRED data for comprehensive comparison
+        fred_12_months = await self.fetch_12_months_fred_data(series_ids)
+        if not fred_12_months:
+            logger.error(f"Failed to fetch 12 months FRED data for {timeframe}")
             return 0, 0
         
-        # Fetch all FRED data for this timeframe
-        fred_data = await self.fetch_all_timeframe_data(series_ids)
-        if not fred_data:
-            logger.error(f"Failed to fetch FRED data for {timeframe}")
-            return 0, 0
-        
-        # Analyze what needs to be updated
-        update_analysis = await self.analyze_data_updates(
-            fred_data, db_latest_date, table_name
+        # Analyze what needs to be updated using 12-month comparison
+        update_analysis = await self.analyze_12_month_data_updates(
+            fred_12_months, db_records, table_name, timeframe
         )
         
         updates_made = 0
         records_created = 0
         
-        # Handle value updates (same date, different value)
-        if update_analysis['value_updates']:
-            updated = await self.update_existing_records(
-                update_analysis['value_updates'], table_name, db_latest_date
-            )
-            updates_made += updated
+        # Handle back revisions (updates to existing records)
+        if update_analysis['back_revisions']:
+            logger.info(f"Processing {len(update_analysis['back_revisions'])} back revisions")
+            for date, updates in update_analysis['back_revisions'].items():
+                updated = await self.update_existing_record_by_date(
+                    updates, table_name, date
+                )
+                updates_made += updated
         
-        # Handle new record creation (new date)
-        if update_analysis['new_data']:
-            created = await self.create_new_records(
-                update_analysis['new_data'], table_name
-            )
-            records_created += created
+        # Handle new record creation with enhanced logic
+        if update_analysis['new_records']:
+            logger.info(f"Creating {len(update_analysis['new_records'])} new records")
+            for date, data in update_analysis['new_records'].items():
+                # Apply quarterly forward-filling if needed
+                enhanced_data = await self.apply_quarterly_forward_filling(
+                    data, fred_12_months, timeframe, date
+                )
+                
+                # Create record even with partial data (using NaN for missing values)
+                if self.should_create_record_with_minimal_data(enhanced_data, timeframe):
+                    created = await self.create_record_with_nan_handling(
+                        enhanced_data, table_name, date
+                    )
+                    records_created += created
+                    logger.info(f"✅ Created record for {date} with {len([v for v in enhanced_data.values() if v is not None])} non-null values")
+                else:
+                    logger.warning(f"Skipping record creation for {date} - insufficient data")
         
+        logger.info(f"✅ {timeframe} update complete: {updates_made} updates, {records_created} new records")
         return updates_made, records_created
     
     async def analyze_data_updates(
@@ -353,6 +380,198 @@ class FREDDataScheduler:
                     logger.info(f"Weekly series update for {series_name}: {db_value} -> {fred_value}")
         
         return analysis
+    
+    async def analyze_12_month_data_updates(
+        self, 
+        fred_12_months: Dict[str, List[Dict[str, Any]]],
+        db_records: List[Dict[str, Any]],
+        table_name: str,
+        timeframe: str
+    ) -> Dict[str, Any]:
+        """
+        Enhanced analysis comparing 12 months of FRED data with database records
+        
+        Returns:
+            Dict with 'back_revisions' and 'new_records' keys
+        """
+        analysis = {
+            'back_revisions': {},  # Date -> {series_name: new_value}
+            'new_records': {},     # Date -> {series_name: value}
+        }
+        
+        # Create a lookup of database records by date
+        db_by_date = {}
+        for record in db_records:
+            date_key = pd.to_datetime(record['observation_date']).strftime('%Y-%m-%d')
+            db_by_date[date_key] = record
+        
+        # Create a comprehensive date-series matrix from FRED data
+        all_dates = set()
+        for series_data in fred_12_months.values():
+            for obs in series_data:
+                all_dates.add(obs['date'])
+        
+        all_dates = sorted(all_dates, reverse=True)  # Most recent first
+        logger.info(f"Analyzing {len(all_dates)} dates across 12 months for {timeframe}")
+        
+        for date in all_dates:
+            date_updates = {}
+            is_new_record = date not in db_by_date
+            
+            for series_name, series_data in fred_12_months.items():
+                # Find FRED value for this date
+                fred_value = None
+                for obs in series_data:
+                    if obs['date'] == date:
+                        fred_value = obs['value']
+                        break
+                
+                if fred_value is None:
+                    continue  # No FRED data for this series on this date
+                
+                if is_new_record:
+                    # This is a new date not in database
+                    if date not in analysis['new_records']:
+                        analysis['new_records'][date] = {}
+                    analysis['new_records'][date][series_name] = fred_value
+                else:
+                    # Check for back revisions in existing records
+                    db_record = db_by_date[date]
+                    db_value = db_record.get(series_name)
+                    
+                    if db_value is None or abs(float(db_value) - fred_value) > 0.001:
+                        # Significant difference or missing value in DB
+                        if date not in analysis['back_revisions']:
+                            analysis['back_revisions'][date] = {}
+                        analysis['back_revisions'][date][series_name] = fred_value
+                        
+                        if db_value is None:
+                            logger.info(f"Back-fill for {series_name} on {date}: None -> {fred_value}")
+                        else:
+                            logger.info(f"Back revision for {series_name} on {date}: {db_value} -> {fred_value}")
+        
+        logger.info(f"Analysis complete: {len(analysis['back_revisions'])} dates need revisions, {len(analysis['new_records'])} new records needed")
+        return analysis
+    
+    async def apply_quarterly_forward_filling(
+        self,
+        current_data: Dict[str, Any],
+        fred_12_months: Dict[str, List[Dict[str, Any]]],
+        timeframe: str,
+        target_date: str
+    ) -> Dict[str, Any]:
+        """
+        Apply forward-filling for quarterly series (GDP, REALGDP, PSTAX, COMREAL)
+        """
+        enhanced_data = current_data.copy()
+        quarterly_series_list = self.quarterly_series.get(timeframe, [])
+        
+        for series_name in quarterly_series_list:
+            if series_name in enhanced_data and enhanced_data[series_name] is not None:
+                continue  # We already have current data
+            
+            # Find the most recent quarterly value
+            if series_name in fred_12_months:
+                last_quarterly_value = self.get_last_quarterly_value(
+                    fred_12_months[series_name], series_name
+                )
+                if last_quarterly_value is not None:
+                    enhanced_data[series_name] = last_quarterly_value
+                    logger.info(f"Forward-filled {series_name} for {target_date} with value {last_quarterly_value}")
+        
+        return enhanced_data
+    
+    async def update_existing_record_by_date(
+        self, 
+        updates: Dict[str, Any], 
+        table_name: str,
+        target_date: str
+    ) -> int:
+        """
+        Update an existing database record for a specific date
+        """
+        try:
+            if not updates:
+                return 0
+            
+            # Build update payload
+            update_data = {}
+            for series_name, value in updates.items():
+                if series_name == "recession":
+                    update_data[series_name] = int(value)
+                else:
+                    update_data[series_name] = float(value)
+            
+            # Update the record
+            response = db_service.supabase.table(table_name)\
+                .update(update_data)\
+                .eq('observation_date', target_date)\
+                .execute()
+            
+            if response.data:
+                logger.info(f"✅ Updated {len(updates)} fields in {table_name} for {target_date}")
+                return 1
+            else:
+                logger.error(f"❌ Failed to update record in {table_name} for {target_date}")
+                return 0
+                
+        except Exception as e:
+            logger.error(f"Failed to update record for {target_date}: {e}")
+            return 0
+    
+    async def create_record_with_nan_handling(
+        self,
+        data: Dict[str, Any],
+        table_name: str,
+        target_date: str
+    ) -> int:
+        """
+        Create a new database record, using NaN for missing values instead of zeros
+        """
+        try:
+            # Get all series for this table to ensure we have all columns
+            config = None
+            for tf, cfg in self.series_mappings.items():
+                if cfg['table'] == table_name:
+                    config = cfg
+                    break
+            
+            if not config:
+                logger.error(f"No configuration found for table {table_name}")
+                return 0
+            
+            # Build complete record with NaN for missing values
+            new_record = {"observation_date": target_date}
+            
+            for series_name in config['series_ids'].keys():
+                if series_name in data and data[series_name] is not None:
+                    if series_name == "recession":
+                        new_record[series_name] = int(data[series_name])
+                    else:
+                        new_record[series_name] = float(data[series_name])
+                else:
+                    # Use NaN (None in database) instead of 0
+                    if series_name == "recession":
+                        new_record[series_name] = None  # Will be handled as NULL in database
+                    else:
+                        new_record[series_name] = None  # Will be handled as NULL in database
+            
+            # Insert the record
+            response = db_service.supabase.table(table_name)\
+                .insert(new_record)\
+                .execute()
+            
+            if response.data:
+                non_null_count = len([v for v in new_record.values() if v is not None]) - 1  # -1 for date
+                logger.info(f"✅ Created record in {table_name} for {target_date} with {non_null_count} non-null values")
+                return 1
+            else:
+                logger.error(f"❌ Failed to create record in {table_name} for {target_date}")
+                return 0
+                
+        except Exception as e:
+            logger.error(f"Failed to create record for {target_date}: {e}")
+            return 0
     
     def _is_weekly_series(self, series_name: str) -> bool:
         """Check if a series is weekly frequency (like ICSA)"""
@@ -605,6 +824,156 @@ class FREDDataScheduler:
             logger.error(f"Network connectivity test failed: {e}")
             return False
     
+    async def fetch_12_months_fred_data(self, series_ids: Dict[str, str]) -> Dict[str, List[Dict[str, Any]]]:
+        """
+        Fetch the last 12 months of data from FRED API for back revision checking
+        
+        Returns:
+            Dict mapping series names to lists of observations (most recent first)
+        """
+        try:
+            # Calculate date range for last 12 months
+            end_date = datetime.now()
+            start_date = end_date - timedelta(days=365)  # Approximately 12 months
+            
+            start_date_str = start_date.strftime('%Y-%m-%d')
+            end_date_str = end_date.strftime('%Y-%m-%d')
+            
+            logger.info(f"Fetching 12 months of FRED data from {start_date_str} to {end_date_str}")
+            
+            results = {}
+            failed_series = []
+            
+            for series_name, series_id in series_ids.items():
+                try:
+                    await asyncio.sleep(0.1)  # Rate limiting
+                    
+                    params = {
+                        'series_id': series_id,
+                        'api_key': os.getenv('FRED_API_KEY'),
+                        'file_type': 'json',
+                        'observation_start': start_date_str,
+                        'observation_end': end_date_str,
+                        'sort_order': 'desc'  # Most recent first
+                    }
+                    
+                    timeout_config = httpx.Timeout(30.0)
+                    async with httpx.AsyncClient(timeout=timeout_config) as client:
+                        response = await client.get(
+                            "https://api.stlouisfed.org/fred/series/observations",
+                            params=params
+                        )
+                        response.raise_for_status()
+                        data = response.json()
+                        
+                        if data and "observations" in data:
+                            # Filter out missing values (".")
+                            valid_observations = []
+                            for obs in data["observations"]:
+                                if obs["value"] != ".":
+                                    try:
+                                        valid_observations.append({
+                                            "date": obs["date"],
+                                            "value": float(obs["value"])
+                                        })
+                                    except (ValueError, TypeError):
+                                        continue
+                            
+                            results[series_name] = valid_observations
+                            logger.debug(f"Fetched {len(valid_observations)} observations for {series_name}")
+                        else:
+                            results[series_name] = []
+                            logger.warning(f"No observations returned for {series_name}")
+                            
+                except Exception as e:
+                    logger.error(f"Failed to fetch 12 months data for {series_name} ({series_id}): {e}")
+                    results[series_name] = []
+                    failed_series.append(series_name)
+            
+            if failed_series:
+                logger.warning(f"Failed to fetch 12 months data for {len(failed_series)} series: {failed_series}")
+            
+            success_count = len([s for s in results.values() if s])
+            logger.info(f"Successfully fetched 12 months data for {success_count}/{len(results)} series")
+            
+            return results
+            
+        except Exception as e:
+            logger.error(f"Failed to fetch 12 months FRED data: {e}")
+            return {}
+    
+    def is_quarterly_series(self, series_name: str, timeframe: str) -> bool:
+        """Check if a series is quarterly and needs forward-filling"""
+        return series_name in self.quarterly_series.get(timeframe, [])
+    
+    def get_current_quarter_months(self, current_date: datetime) -> List[str]:
+        """Get the months for the current quarter"""
+        month = current_date.month
+        year = current_date.year
+        
+        if month <= 3:  # Q1: Jan, Feb, Mar
+            quarter_months = [f"{year}-01-01", f"{year}-02-01", f"{year}-03-01"]
+        elif month <= 6:  # Q2: Apr, May, Jun
+            quarter_months = [f"{year}-04-01", f"{year}-05-01", f"{year}-06-01"]
+        elif month <= 9:  # Q3: Jul, Aug, Sep
+            quarter_months = [f"{year}-07-01", f"{year}-08-01", f"{year}-09-01"]
+        else:  # Q4: Oct, Nov, Dec
+            quarter_months = [f"{year}-10-01", f"{year}-11-01", f"{year}-12-01"]
+        
+        return quarter_months
+    
+    def get_last_quarterly_value(self, series_data: List[Dict[str, Any]], series_name: str) -> Optional[float]:
+        """Get the most recent quarterly value for forward-filling"""
+        if not series_data:
+            return None
+        
+        # Quarterly data is released in specific months
+        quarterly_months = [1, 4, 7, 10]  # Jan, Apr, Jul, Oct
+        
+        for obs in series_data:  # Already sorted by date desc
+            obs_date = pd.to_datetime(obs["date"])
+            if obs_date.month in quarterly_months:
+                logger.info(f"Found quarterly value for {series_name}: {obs['value']} from {obs['date']}")
+                return obs["value"]
+        
+        logger.warning(f"No quarterly value found for {series_name} in recent data")
+        return None
+    
+    def should_create_record_with_minimal_data(self, current_data: Dict[str, Any], timeframe: str) -> bool:
+        """
+        Check if we should create a new record with minimal data (using NaN for missing values)
+        Returns True if we have at least one non-quarterly feature value OR if it's a month 
+        where we should have data based on last known data dates
+        """
+        quarterly_series_list = self.quarterly_series.get(timeframe, [])
+        non_quarterly_count = 0
+        
+        for series_name, value in current_data.items():
+            if series_name not in quarterly_series_list and value is not None:
+                non_quarterly_count += 1
+        
+        # Create record if we have at least one non-quarterly feature
+        return non_quarterly_count > 0
+    
+    def should_create_record_for_previous_month(self, timeframe: str) -> bool:
+        """
+        Check if we should create a record for the previous month based on FRED data availability.
+        This checks if the month before the current scheduler run matches the month of the latest
+        feature value, indicating FRED has released past month's data.
+        """
+        current_date = datetime.now()
+        
+        # Get the previous month's date
+        if current_date.month == 1:
+            prev_month_date = current_date.replace(year=current_date.year - 1, month=12, day=1)
+        else:
+            prev_month_date = current_date.replace(month=current_date.month - 1, day=1)
+        
+        prev_month_str = prev_month_date.strftime('%Y-%m-%d')
+        
+        logger.info(f"Checking if we should create record for previous month: {prev_month_str}")
+        return True  # For now, always try to create previous month record if we have any data
+    
     async def check_series_for_update(self, series_id: str, series_name: str, timeframe: str) -> bool:
         """
         Check if a specific series has updates available
@@ -651,6 +1020,23 @@ class FREDDataScheduler:
         except Exception as e:
             logger.error(f"Failed to fetch latest date from {table_name}: {e}")
             return None
+    
+    async def get_database_last_12_months(self, table_name: str) -> List[Dict[str, Any]]:
+        """Get the last 12 months of data from a specific database table for back revision checking"""
+        try:
+            response = db_service.supabase.table(table_name)\
+                .select("*")\
+                .order('observation_date', desc=True)\
+                .limit(12)\
+                .execute()
+            
+            if response.data:
+                logger.info(f"Retrieved {len(response.data)} records from {table_name} for back revision check")
+                return response.data
+            return []
+        except Exception as e:
+            logger.error(f"Failed to get last 12 months from {table_name}: {e}")
+            return []
     
     async def get_latest_database_record(self, table_name: str) -> Optional[Dict[str, Any]]:
         """Get the complete latest record from a database table"""
