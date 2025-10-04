@@ -4,7 +4,6 @@ import pandas as pd
 from datetime import datetime, timedelta
 from typing import Optional, Dict, Any
 import logging
-import calendar
 from services.database_service import db_service
 from services.forecast_service_3m import predict_3m, initialize_3m_service
 from services.shared_fred_date_service import shared_fred_date_service
@@ -43,44 +42,6 @@ SERIES_IDS_3M = {
 
 # Define which series are weekly (need monthly averaging)
 WEEKLY_SERIES = {"ICSA"}
-
-def is_last_5_days_of_month() -> bool:
-    """Check if today is within the last 5 days of the current month"""
-    today = datetime.now()
-    # Get the last day of the current month
-    last_day = calendar.monthrange(today.year, today.month)[1]
-    # Calculate how many days until end of month
-    days_until_end = last_day - today.day
-    return days_until_end < 5
-
-def forward_fill_nulls_from_previous_row(latest_row: Dict[str, Any], previous_row: Dict[str, Any]) -> Dict[str, Any]:
-    """
-    Forward fill NULL/None values in the latest row with values from the previous row.
-    This handles the case where the scheduler creates incomplete records with NaN values.
-    """
-    if not latest_row or not previous_row:
-        return latest_row
-    
-    filled_row = latest_row.copy()
-    null_count = 0
-    filled_count = 0
-    
-    for key, value in latest_row.items():
-        if key == 'observation_date':  # Don't forward fill dates
-            continue
-            
-        if value is None or (isinstance(value, float) and pd.isna(value)):
-            null_count += 1
-            if key in previous_row and previous_row[key] is not None:
-                if not (isinstance(previous_row[key], float) and pd.isna(previous_row[key])):
-                    filled_row[key] = previous_row[key]
-                    filled_count += 1
-                    logger.info(f"Forward filled {key}: {previous_row[key]}")
-    
-    if null_count > 0:
-        logger.info(f"Forward filled {filled_count}/{null_count} NULL values from previous row")
-    
-    return filled_row
 
 async def fetch_latest_observation_3m(series_id: str) -> Dict[str, Any]:
     """Fetch latest observation for a specific series from FRED API"""
@@ -315,29 +276,16 @@ def insert_fred_data_to_database_3m(fred_data: Dict[str, Any]) -> bool:
         return False
 
 def get_latest_database_row_3m() -> Optional[Dict[str, Any]]:
-    """
-    Get the latest row from the database for 3M with NULL handling.
-    Fetches the last 2 rows and forward fills NULL values from the previous row.
-    """
+    """Get the latest row from the database for 3M"""
     try:
         response = db_service.supabase.table('historical_data_3m')\
             .select("*")\
             .order('observation_date', desc=True)\
-            .limit(2)\
+            .limit(1)\
             .execute()
         
         if response.data and len(response.data) > 0:
-            latest_row = response.data[0]
-            
-            # If we have a previous row, use it to forward fill NULLs
-            if len(response.data) > 1:
-                previous_row = response.data[1]
-                latest_row = forward_fill_nulls_from_previous_row(latest_row, previous_row)
-                logger.info("Applied forward filling for NULL values using previous row")
-            else:
-                logger.info("Only one row available, no forward filling possible")
-            
-            return latest_row
+            return response.data[0]
         return None
     except Exception as e:
         logger.error(f"Failed to get latest database row for 3M: {e}")
@@ -435,30 +383,9 @@ async def get_latest_prediction_3m() -> ForecastResponse3M:
             features = convert_to_input_features_3m(latest_row)
             
         else:
-            # Check if we should fetch new data (month-end fallback mechanism)
-            should_fetch = is_last_5_days_of_month()
-            
-            if should_fetch:
-                # Dates don't match or no DB data - fetch from FRED
-                logger.info("Running month-end fallback: Fetching new data from FRED API for 3M (including weekly series averaging)")
-                fred_data = await fetch_all_fred_data_3m()
-            else:
-                # Use existing database data even if dates don't match (not month-end)
-                logger.info(f"Not in month-end period (last 5 days). Using existing database data for 3M even though dates don't match.")
-                logger.info(f"FRED date: {fred_latest_date}, DB date: {db_latest_date}")
-                latest_row = get_latest_database_row_3m()
-                if not latest_row:
-                    raise RuntimeError("Failed to get latest row from database for 3M")
-                
-                features = convert_to_input_features_3m(latest_row)
-                prediction_result = predict_3m(features)
-                prediction_result.feature_importance = {
-                    "data_source": "database_scheduled",
-                    "fred_date": fred_latest_date,
-                    "db_date": db_latest_date,
-                    "note": "Used database data (not month-end period)"
-                }
-                return prediction_result
+            # Dates don't match or no DB data - fetch from FRED
+            logger.info("Fetching new data from FRED API for 3M (including weekly series averaging)")
+            fred_data = await fetch_all_fred_data_3m()
             if not fred_data:
                 raise RuntimeError("Failed to fetch data from FRED API for 3M")
             

@@ -1,8 +1,6 @@
 import asyncio
 import logging
 import httpx
-import os
-import calendar
 from datetime import datetime, timedelta, timezone
 from typing import Dict, Any, Optional, List, Tuple
 import pandas as pd
@@ -83,20 +81,13 @@ class FREDDataScheduler:
             }
         }
         
-        # Define quarterly series that need forward-filling
-        self.quarterly_series = {
-            '1m': ['GDP', 'REALGDP', 'PSTAX', 'COMREAL'],
-            '3m': ['GDP'],
-            '6m': ['GDP']
-        }
-        
         self._running = False
     
     def _get_3m_series_ids(self) -> Dict[str, str]:
         """Get series IDs for 3-month model - placeholder for now"""
         # Import from 3m service when available
         try:
-            from services.fred_data_service_3m import SERIES_IDS_3M 
+            from services.fred_data_service_3m import SERIES_IDS as SERIES_IDS_3M
             return SERIES_IDS_3M
         except ImportError:
             # Fallback to 1m series for now
@@ -246,12 +237,7 @@ class FREDDataScheduler:
     
     async def check_and_update_timeframe_data(self, timeframe: str) -> Tuple[int, int]:
         """
-        Correct method to check and update data for a specific timeframe
-        - Database records always use YYYY-MM-01 format (first day of month)
-        - Fetches last 12 months of data from database (last 12 records)
-        - Fetches 12 months of FRED data for comparison
-        - Updates existing records for back revisions
-        - Creates maximum 1 new record for the most recent month
+        Check and update data for a specific timeframe
         
         Returns:
             Tuple of (records_updated, records_created)
@@ -263,144 +249,110 @@ class FREDDataScheduler:
         table_name = config['table']
         series_ids = config['series_ids']
         
-        logger.info(f"🔄 Correct update check for {timeframe} - {len(series_ids)} series")
+        logger.info(f"Checking {len(series_ids)} series for {timeframe} data")
+        logger.debug(f"Series for {timeframe}: {list(series_ids.keys())}")
         
-        # Get last 12 months from database (last 12 records with YYYY-MM-01 format)
-        db_records = await self.get_database_last_12_months(table_name)
+        # Get latest database date for this timeframe
+        db_latest_date = await self.get_database_latest_date(table_name)
+        if not db_latest_date:
+            logger.warning(f"No data found in {table_name}")
+            return 0, 0
         
-        # Fetch 12 months of FRED data using proper date range
-        fred_data = await self.fetch_12_months_fred_data_correct(series_ids)
+        # Fetch all FRED data for this timeframe
+        fred_data = await self.fetch_all_timeframe_data(series_ids)
         if not fred_data:
             logger.error(f"Failed to fetch FRED data for {timeframe}")
             return 0, 0
         
-        # Process FRED data into monthly format (YYYY-MM-01)
-        processed_fred_data = await self.process_fred_data_to_monthly(fred_data, timeframe)
+        # Analyze what needs to be updated
+        update_analysis = await self.analyze_data_updates(
+            fred_data, db_latest_date, table_name
+        )
         
-        # Compare database records with processed FRED data
         updates_made = 0
         records_created = 0
         
-        # Create lookup of existing database records by month
-        db_by_month = {}
-        if db_records:
-            for record in db_records:
-                month_key = pd.to_datetime(record['observation_date']).strftime('%Y-%m-01')
-                db_by_month[month_key] = record
+        # Handle value updates (same date, different value)
+        if update_analysis['value_updates']:
+            updated = await self.update_existing_records(
+                update_analysis['value_updates'], table_name, db_latest_date
+            )
+            updates_made += updated
         
-        # Get all months that should exist (last 12 months ending with previous month)
-        current_date = datetime.now()
+        # Handle new record creation (new date)
+        if update_analysis['new_data']:
+            created = await self.create_new_records(
+                update_analysis['new_data'], table_name
+            )
+            records_created += created
         
-        # Start from previous month (economic data is always a month behind)
-        if current_date.month == 1:
-            start_month_date = datetime(current_date.year - 1, 12, 1)
-        else:
-            start_month_date = datetime(current_date.year, current_date.month - 1, 1)
-        
-        months_to_check = []
-        for i in range(12):
-            month_date = start_month_date - timedelta(days=32*i)
-            month_date = month_date.replace(day=1)  # First day of month
-            months_to_check.append(month_date.strftime('%Y-%m-01'))
-        
-        months_to_check.reverse()  # Oldest to newest
-        
-        # Process each month
-        for month_key in months_to_check:
-            if month_key in processed_fred_data:
-                fred_month_data = processed_fred_data[month_key]
-                
-                if month_key in db_by_month:
-                    # Update existing record if values changed
-                    db_record = db_by_month[month_key]
-                    updates = {}
-                    
-                    for series_name, fred_value in fred_month_data.items():
-                        if series_name == 'observation_date':
-                            continue
-                        
-                        db_value = db_record.get(series_name)
-                        if db_value is None or abs(float(db_value) - float(fred_value)) > 0.001:
-                            updates[series_name] = fred_value
-                    
-                    if updates:
-                        updated = await self.update_existing_record_by_date(
-                            updates, table_name, month_key
-                        )
-                        updates_made += updated
-                        logger.info(f"✅ Updated {len(updates)} fields for {month_key}")
-                
-                else:
-                    # Create new record (should be maximum 1 - the most recent month)
-                    if month_key == max(processed_fred_data.keys()):  # Only create the most recent
-                        # Check if we have sufficient data to create a meaningful record
-                        non_null_count = len([v for k, v in fred_month_data.items() if k != 'observation_date' and v is not None])
-                        total_series = len(config['series_ids'])
-                        data_percentage = (non_null_count / total_series) * 100
-                        
-                        logger.info(f"📊 {timeframe} - Creating record for {month_key}: {non_null_count}/{total_series} series ({data_percentage:.1f}% complete)")
-                        
-                        # Create record if we have at least 25% of the expected data
-                        if non_null_count >= max(1, total_series * 0.25):
-                            created = await self.create_monthly_record(
-                                fred_month_data, table_name, month_key
-                            )
-                            records_created += created
-                            if created > 0:
-                                logger.info(f"✅ {timeframe} - Successfully created new record for {month_key}")
-                            else:
-                                logger.warning(f"⚠️ {timeframe} - Failed to create record for {month_key}")
-                        else:
-                            logger.warning(f"⚠️ {timeframe} - Insufficient data for {month_key} ({data_percentage:.1f}% complete), skipping record creation")
-        
-        logger.info(f"✅ {timeframe} update complete: {updates_made} updates, {records_created} new records")
         return updates_made, records_created
     
-    # analyze_data_updates function removed - no longer used by corrected implementation
-    
-
-    
-
-    
-    async def update_existing_record_by_date(
+    async def analyze_data_updates(
         self, 
-        updates: Dict[str, Any], 
-        table_name: str,
-        target_date: str
-    ) -> int:
+        fred_data: Dict[str, Any], 
+        db_latest_date: str, 
+        table_name: str
+    ) -> Dict[str, Any]:
         """
-        Update an existing database record for a specific date
+        Analyze FRED data to determine what updates are needed
+        
+        Returns:
+            Dict with 'value_updates' and 'new_data' keys
         """
-        try:
-            if not updates:
-                return 0
+        analysis = {
+            'value_updates': {},  # Same date, different values
+            'new_data': {},       # New dates requiring new records
+            'no_changes': []      # Series with no changes
+        }
+        
+        # Get the latest database record for comparison
+        latest_db_record = await self.get_latest_database_record(table_name)
+        if not latest_db_record:
+            # If no database record, all FRED data is new
+            analysis['new_data'] = fred_data
+            return analysis
+        
+        db_date = pd.to_datetime(db_latest_date).strftime('%Y-%m-%d')
+        
+        for series_name, fred_info in fred_data.items():
+            if not fred_info or fred_info['value'] is None:
+                continue
             
-            # Build update payload
-            update_data = {}
-            for series_name, value in updates.items():
-                if series_name == "recession":
-                    update_data[series_name] = int(value)
+            fred_date = fred_info['date']
+            fred_value = fred_info['value']
+            
+            # Compare dates
+            if fred_date == db_date:
+                # Same date - check if value is different
+                db_value = latest_db_record.get(series_name)
+                if db_value is not None and abs(float(fred_value) - float(db_value)) > 1e-6:
+                    analysis['value_updates'][series_name] = {
+                        'new_value': fred_value,
+                        'old_value': db_value,
+                        'date': fred_date
+                    }
+                    logger.info(f"Value update needed for {series_name}: {db_value} -> {fred_value}")
                 else:
-                    update_data[series_name] = float(value)
+                    analysis['no_changes'].append(series_name)
             
-            # Update the record
-            response = db_service.supabase.table(table_name)\
-                .update(update_data)\
-                .eq('observation_date', target_date)\
-                .execute()
+            elif fred_date > db_date:
+                # New date - this series has new data
+                analysis['new_data'][series_name] = fred_info
+                logger.info(f"New data available for {series_name}: {fred_date}")
             
-            if response.data:
-                logger.info(f"✅ Updated {len(updates)} fields in {table_name} for {target_date}")
-                return 1
-            else:
-                logger.error(f"❌ Failed to update record in {table_name} for {target_date}")
-                return 0
-                
-        except Exception as e:
-            logger.error(f"Failed to update record for {target_date}: {e}")
-            return 0
-    
-
+            elif self._is_weekly_series(series_name) and self._same_month(fred_date, db_date):
+                # For weekly series, check if it's the same month but different value
+                db_value = latest_db_record.get(series_name)
+                if db_value is not None and abs(float(fred_value) - float(db_value)) > 1e-6:
+                    analysis['value_updates'][series_name] = {
+                        'new_value': fred_value,
+                        'old_value': db_value,
+                        'date': db_date  # Keep the database date for weekly updates
+                    }
+                    logger.info(f"Weekly series update for {series_name}: {db_value} -> {fred_value}")
+        
+        return analysis
     
     def _is_weekly_series(self, series_name: str) -> bool:
         """Check if a series is weekly frequency (like ICSA)"""
@@ -416,11 +368,180 @@ class FREDDataScheduler:
         except:
             return False
     
-    # update_existing_records function removed - replaced by update_existing_record_by_date
+    async def update_existing_records(
+        self, 
+        value_updates: Dict[str, Any], 
+        table_name: str, 
+        target_date: str
+    ) -> int:
+        """
+        Update existing database records with new values
+        
+        Returns:
+            Number of records updated
+        """
+        if not value_updates:
+            return 0
+        
+        try:
+            # Prepare update data
+            update_data = {}
+            for series_name, update_info in value_updates.items():
+                update_data[series_name] = update_info['new_value']
+            
+            # Update the record with the target date
+            response = db_service.supabase.table(table_name)\
+                .update(update_data)\
+                .eq('observation_date', target_date)\
+                .execute()
+            
+            if response.data:
+                logger.info(f"✅ Updated {len(value_updates)} fields in {table_name} for {target_date}")
+                return len(value_updates)
+            else:
+                logger.error(f"❌ Failed to update records in {table_name}")
+                return 0
+                
+        except Exception as e:
+            logger.error(f"❌ Error updating records in {table_name}: {e}")
+            return 0
     
-    # create_new_records function removed - replaced by create_monthly_record
+    async def create_new_records(self, new_data: Dict[str, Any], table_name: str) -> int:
+        """
+        Create new database records for new FRED data
+        
+        Returns:
+            Number of records created
+        """
+        if not new_data:
+            return 0
+        
+        # Group data by date (in case we have multiple dates)
+        data_by_date = {}
+        for series_name, fred_info in new_data.items():
+            date = fred_info['date']
+            if date not in data_by_date:
+                data_by_date[date] = {}
+            data_by_date[date][series_name] = fred_info['value']
+        
+        records_created = 0
+        
+        for date, series_data in data_by_date.items():
+            try:
+                # Check if we have enough data to create a complete record
+                # We need most of the required fields to avoid too many NaN values
+                if len(series_data) < len(self.series_mappings['1m']['series_ids']) * 0.8:
+                    logger.warning(f"Insufficient data for {date}, skipping record creation")
+                    continue
+                
+                # Prepare the new record
+                new_record = {'observation_date': date}
+                
+                # Add all available series data
+                for series_name, value in series_data.items():
+                    if series_name == 'recession':
+                        new_record[series_name] = int(float(value)) if value is not None else 0
+                    else:
+                        new_record[series_name] = float(value) if value is not None else 0.0
+                
+                # Fill missing series with default values
+                all_series = self.series_mappings['1m']['series_ids'].keys()
+                for series_name in all_series:
+                    if series_name not in new_record:
+                        if series_name == 'recession':
+                            new_record[series_name] = 0
+                        else:
+                            new_record[series_name] = 0.0
+                
+                # Insert the new record
+                response = db_service.supabase.table(table_name)\
+                    .insert(new_record)\
+                    .execute()
+                
+                if response.data:
+                    logger.info(f"✅ Created new record in {table_name} for {date}")
+                    records_created += 1
+                else:
+                    logger.error(f"❌ Failed to create record in {table_name} for {date}")
+                    
+            except Exception as e:
+                logger.error(f"❌ Error creating record for {date}: {e}")
+                continue
+        
+        return records_created
     
-    # fetch_all_timeframe_data function removed - replaced by fetch_12_months_fred_data_correct
+    async def fetch_all_timeframe_data(self, series_ids: Dict[str, str]) -> Dict[str, Any]:
+        """
+        Fetch latest data for all series in a timeframe with enhanced error handling
+        """
+        try:
+            results = {}
+            failed_series = []
+            network_error_count = 0
+            
+            # Optional network connectivity pre-check (non-blocking)
+            try:
+                connectivity_ok = await self._test_network_connectivity()
+                if connectivity_ok:
+                    logger.debug("Network connectivity pre-check passed")
+                else:
+                    logger.warning("Network connectivity pre-check failed - proceeding anyway")
+            except Exception as e:
+                logger.warning(f"Network connectivity pre-check failed with error: {e} - proceeding anyway")
+            
+            for name, series_id in series_ids.items():
+                try:
+                    # Add small delay to avoid rate limiting
+                    await asyncio.sleep(0.1)
+                    
+                    data = await fetch_latest_observation(series_id, timeout=30)
+                    
+                    if data and "observations" in data and len(data["observations"]) > 0:
+                        obs = data["observations"][0]
+                        results[name] = {
+                            "date": obs["date"],
+                            "value": float(obs["value"]) if obs["value"] != "." else None
+                        }
+                        logger.debug(f"✅ Successfully fetched {name}: {obs['value']}")
+                    else:
+                        failed_series.append(name)
+                        results[name] = None
+                        logger.warning(f"⚠️ No data returned for {name}")
+                        
+                except Exception as e:
+                    error_msg = str(e)
+                    logger.error(f"Failed to fetch {name} ({series_id}): {error_msg}")
+                    failed_series.append(name)
+                    results[name] = None
+                    
+                    # Track network-related errors
+                    if "getaddrinfo failed" in error_msg or "ConnectError" in error_msg:
+                        network_error_count += 1
+                        
+                        # If too many network errors, stop trying
+                        if network_error_count >= 3:
+                            logger.error(f"❌ Multiple network errors detected ({network_error_count}). Stopping fetch attempts.")
+                            break
+            
+            if failed_series:
+                logger.warning(f"Failed to fetch {len(failed_series)} series: {failed_series}")
+                
+                # If most series failed due to network issues, warn but don't abort completely
+                if network_error_count >= len(series_ids) * 0.5:
+                    logger.error(f"Network connectivity issues prevented fetching {network_error_count} series - continuing with available data")
+            
+            success_count = len(results) - len(failed_series)
+            logger.info(f"Successfully fetched {success_count}/{len(results)} series")
+            
+            # Return results even if some failed, but log the issues
+            return results
+            
+        except ConnectionError:
+            # Re-raise connection errors
+            raise
+        except Exception as e:
+            logger.error(f"Failed to fetch timeframe data: {e}")
+            return {}
     
     async def _test_network_connectivity(self) -> bool:
         """Test basic network connectivity to FRED API"""
@@ -484,349 +605,6 @@ class FREDDataScheduler:
             logger.error(f"Network connectivity test failed: {e}")
             return False
     
-    async def fetch_12_months_fred_data_correct(self, series_ids: Dict[str, str]) -> Dict[str, List[Dict[str, Any]]]:
-        """
-        Correctly fetch the last 12 months of data from FRED API
-        Uses proper date range with observation_start and observation_end
-        
-        Returns:
-            Dict mapping series names to lists of observations
-        """
-        try:
-            # Calculate proper date range - 12 months back from current month
-            current_date = datetime.now()
-            
-            # End date is the last day of previous month (FRED data is always a month behind)
-            if current_date.month == 1:
-                end_month = 12
-                end_year = current_date.year - 1
-            else:
-                end_month = current_date.month - 1
-                end_year = current_date.year
-            
-            # Start date is 12 months before the end month
-            start_year = end_year
-            start_month = end_month - 11
-            if start_month <= 0:
-                start_month += 12
-                start_year -= 1
-            
-            start_date_str = f"{start_year}-{start_month:02d}-01"
-            end_date_str = f"{end_year}-{end_month:02d}-{calendar.monthrange(end_year, end_month)[1]}"
-            
-            logger.info(f"Fetching 12 months of FRED data from {start_date_str} to {end_date_str}")
-            
-            results = {}
-            failed_series = []
-            
-            for series_name, series_id in series_ids.items():
-                try:
-                    await asyncio.sleep(0.1)  # Rate limiting
-                    
-                    params = {
-                        'series_id': series_id,
-                        'api_key': os.getenv('FRED_API_KEY'),
-                        'file_type': 'json',
-                        'observation_start': start_date_str,
-                        'observation_end': end_date_str,
-                        'sort_order': 'desc',  # Most recent first
-                        'limit': 120  # Enough for weekly data aggregation
-                    }
-                    
-                    timeout_config = httpx.Timeout(30.0)
-                    async with httpx.AsyncClient(timeout=timeout_config) as client:
-                        response = await client.get(
-                            "https://api.stlouisfed.org/fred/series/observations",
-                            params=params
-                        )
-                        response.raise_for_status()
-                        data = response.json()
-                        
-                        if data and "observations" in data:
-                            # Filter out missing values (".")
-                            valid_observations = []
-                            for obs in data["observations"]:
-                                if obs["value"] != ".":
-                                    try:
-                                        valid_observations.append({
-                                            "date": obs["date"],
-                                            "value": float(obs["value"])
-                                        })
-                                    except (ValueError, TypeError):
-                                        continue
-                            
-                            results[series_name] = valid_observations
-                            logger.debug(f"Fetched {len(valid_observations)} observations for {series_name}")
-                        else:
-                            results[series_name] = []
-                            logger.warning(f"No observations returned for {series_name}")
-                            
-                except Exception as e:
-                    logger.error(f"Failed to fetch data for {series_name} ({series_id}): {e}")
-                    results[series_name] = []
-                    failed_series.append(series_name)
-            
-            if failed_series:
-                logger.warning(f"Failed to fetch data for {len(failed_series)} series: {failed_series}")
-            
-            success_count = len([s for s in results.values() if s])
-            logger.info(f"Successfully fetched data for {success_count}/{len(results)} series")
-            
-            return results
-            
-        except Exception as e:
-            logger.error(f"Failed to fetch 12 months FRED data: {e}")
-            return {}
-    
-    async def process_fred_data_to_monthly(
-        self, 
-        fred_data: Dict[str, List[Dict[str, Any]]], 
-        timeframe: str
-    ) -> Dict[str, Dict[str, Any]]:
-        """
-        Process FRED data into monthly format with YYYY-MM-01 dates
-        Handle quarterly forward-filling and weekly averaging
-        
-        Returns:
-            Dict mapping month strings (YYYY-MM-01) to series data
-        """
-        monthly_data = {}
-        quarterly_series_list = self.quarterly_series.get(timeframe, [])
-        
-        # Get the last 12 months we need to process (ending with previous month)
-        current_date = datetime.now()
-        
-        # Start from previous month (economic data is always a month behind)
-        if current_date.month == 1:
-            start_month_date = datetime(current_date.year - 1, 12, 1)
-        else:
-            start_month_date = datetime(current_date.year, current_date.month - 1, 1)
-        
-        months_needed = []
-        for i in range(12):
-            month_date = start_month_date - timedelta(days=32*i)
-            month_date = month_date.replace(day=1)
-            months_needed.append(month_date.strftime('%Y-%m-01'))
-        
-        months_needed.reverse()  # Oldest to newest
-        
-        for month_key in months_needed:
-            month_data = {'observation_date': month_key}
-            month_dt = pd.to_datetime(month_key)
-            
-            for series_name, observations in fred_data.items():
-                if not observations:
-                    continue
-                
-                if series_name in quarterly_series_list:
-                    # Handle quarterly data with forward-filling
-                    quarterly_value = self.get_quarterly_value_for_month(observations, month_dt)
-                    if quarterly_value is not None:
-                        month_data[series_name] = quarterly_value
-                
-                elif self._is_weekly_series(series_name):
-                    # Handle weekly data (ICSA) - calculate monthly average
-                    weekly_average = self.calculate_monthly_average_from_weekly(observations, month_dt)
-                    if weekly_average is not None:
-                        month_data[series_name] = weekly_average
-                
-                else:
-                    # Handle monthly data - get the value for this specific month
-                    monthly_value = self.get_monthly_value(observations, month_dt)
-                    if monthly_value is not None:
-                        month_data[series_name] = monthly_value
-            
-            # Only add month if we have at least some data
-            if len(month_data) > 1:  # More than just observation_date
-                monthly_data[month_key] = month_data
-        
-        logger.info(f"Processed FRED data into {len(monthly_data)} monthly records")
-        return monthly_data
-    
-    def get_quarterly_value_for_month(self, observations: List[Dict[str, Any]], month_dt: datetime) -> Optional[float]:
-        """Get quarterly value for a specific month with forward-filling logic"""
-        quarter_starts = {
-            1: [1, 2, 3],    # Q1: Jan, Feb, Mar
-            2: [4, 5, 6],    # Q2: Apr, May, Jun  
-            3: [7, 8, 9],    # Q3: Jul, Aug, Sep
-            4: [10, 11, 12]  # Q4: Oct, Nov, Dec
-        }
-        
-        # Determine which quarter this month belongs to
-        month_num = month_dt.month
-        target_quarter = None
-        for quarter, months in quarter_starts.items():
-            if month_num in months:
-                target_quarter = quarter
-                break
-        
-        # Look for data in the target quarter first
-        for obs in observations:
-            obs_dt = pd.to_datetime(obs['date'])
-            obs_quarter = ((obs_dt.month - 1) // 3) + 1
-            
-            if obs_dt.year == month_dt.year and obs_quarter == target_quarter:
-                logger.debug(f"Found quarterly data for {month_dt.strftime('%Y-%m')}: Q{target_quarter} = {obs['value']}")
-                return obs['value']
-        
-        # If no data for target quarter, forward-fill from the most recent available quarter
-        for obs in observations:
-            obs_dt = pd.to_datetime(obs['date'])
-            if obs_dt <= month_dt:  # Only use past data
-                logger.debug(f"Forward-filling quarterly data for {month_dt.strftime('%Y-%m')} with {obs['value']} from {obs['date']}")
-                return obs['value']
-        
-        return None
-    
-    def calculate_monthly_average_from_weekly(self, observations: List[Dict[str, Any]], month_dt: datetime) -> Optional[float]:
-        """Calculate monthly average from weekly observations (for ICSA)"""
-        month_values = []
-        
-        for obs in observations:
-            obs_dt = pd.to_datetime(obs['date'])
-            if obs_dt.year == month_dt.year and obs_dt.month == month_dt.month:
-                month_values.append(obs['value'])
-        
-        if month_values:
-            average = sum(month_values) / len(month_values)
-            logger.debug(f"Calculated monthly average for {month_dt.strftime('%Y-%m')}: {average} from {len(month_values)} weekly observations")
-            return average
-        
-        return None
-    
-    def get_monthly_value(self, observations: List[Dict[str, Any]], month_dt: datetime) -> Optional[float]:
-        """Get the monthly value for a specific month"""
-        for obs in observations:
-            obs_dt = pd.to_datetime(obs['date'])
-            if obs_dt.year == month_dt.year and obs_dt.month == month_dt.month:
-                return obs['value']
-        
-        return None
-    
-    async def create_monthly_record(
-        self, 
-        month_data: Dict[str, Any], 
-        table_name: str, 
-        month_key: str
-    ) -> int:
-        """
-        Create a new monthly record with proper YYYY-MM-01 format
-        """
-        try:
-            # Get all expected series for this table 
-            config = None
-            for tf, cfg in self.series_mappings.items():
-                if cfg['table'] == table_name:
-                    config = cfg
-                    break
-            
-            if not config:
-                logger.error(f"No configuration found for table {table_name}")
-                return 0
-            
-            # Build complete record
-            new_record = {"observation_date": month_key}
-            
-            for series_name in config['series_ids'].keys():
-                if series_name in month_data:
-                    if series_name == "recession":
-                        new_record[series_name] = int(month_data[series_name])
-                    else:
-                        new_record[series_name] = float(month_data[series_name])
-                else:
-                    # Use NULL for missing values
-                    new_record[series_name] = None
-            
-            # Insert the record
-            response = db_service.supabase.table(table_name)\
-                .insert(new_record)\
-                .execute()
-            
-            if response.data:
-                non_null_count = len([v for v in new_record.values() if v is not None]) - 1  # -1 for date
-                total_series = len(config['series_ids'])
-                logger.info(f"✅ Created monthly record for {month_key} with {non_null_count}/{total_series} non-null values")
-                return 1
-            else:
-                logger.error(f"❌ Failed to create monthly record for {month_key}")
-                return 0
-                
-        except Exception as e:
-            logger.error(f"Failed to create monthly record for {month_key}: {e}")
-            return 0
-    
-    def is_quarterly_series(self, series_name: str, timeframe: str) -> bool:
-        """Check if a series is quarterly and needs forward-filling"""
-        return series_name in self.quarterly_series.get(timeframe, [])
-    
-    def get_current_quarter_months(self, current_date: datetime) -> List[str]:
-        """Get the months for the current quarter"""
-        month = current_date.month
-        year = current_date.year
-        
-        if month <= 3:  # Q1: Jan, Feb, Mar
-            quarter_months = [f"{year}-01-01", f"{year}-02-01", f"{year}-03-01"]
-        elif month <= 6:  # Q2: Apr, May, Jun
-            quarter_months = [f"{year}-04-01", f"{year}-05-01", f"{year}-06-01"]
-        elif month <= 9:  # Q3: Jul, Aug, Sep
-            quarter_months = [f"{year}-07-01", f"{year}-08-01", f"{year}-09-01"]
-        else:  # Q4: Oct, Nov, Dec
-            quarter_months = [f"{year}-10-01", f"{year}-11-01", f"{year}-12-01"]
-        
-        return quarter_months
-    
-    def get_last_quarterly_value(self, series_data: List[Dict[str, Any]], series_name: str) -> Optional[float]:
-        """Get the most recent quarterly value for forward-filling"""
-        if not series_data:
-            return None
-        
-        # Quarterly data is released in specific months
-        quarterly_months = [1, 4, 7, 10]  # Jan, Apr, Jul, Oct
-        
-        for obs in series_data:  # Already sorted by date desc
-            obs_date = pd.to_datetime(obs["date"])
-            if obs_date.month in quarterly_months:
-                logger.info(f"Found quarterly value for {series_name}: {obs['value']} from {obs['date']}")
-                return obs["value"]
-        
-        logger.warning(f"No quarterly value found for {series_name} in recent data")
-        return None
-    
-    def should_create_record_with_minimal_data(self, current_data: Dict[str, Any], timeframe: str) -> bool:
-        """
-        Check if we should create a new record with minimal data (using NaN for missing values)
-        Returns True if we have at least one non-quarterly feature value OR if it's a month 
-        where we should have data based on last known data dates
-        """
-        quarterly_series_list = self.quarterly_series.get(timeframe, [])
-        non_quarterly_count = 0
-        
-        for series_name, value in current_data.items():
-            if series_name not in quarterly_series_list and value is not None:
-                non_quarterly_count += 1
-        
-        # Create record if we have at least one non-quarterly feature
-        return non_quarterly_count > 0
-    
-    def should_create_record_for_previous_month(self, timeframe: str) -> bool:
-        """
-        Check if we should create a record for the previous month based on FRED data availability.
-        This checks if the month before the current scheduler run matches the month of the latest
-        feature value, indicating FRED has released past month's data.
-        """
-        current_date = datetime.now()
-        
-        # Get the previous month's date
-        if current_date.month == 1:
-            prev_month_date = current_date.replace(year=current_date.year - 1, month=12, day=1)
-        else:
-            prev_month_date = current_date.replace(month=current_date.month - 1, day=1)
-        
-        prev_month_str = prev_month_date.strftime('%Y-%m-%d')
-        
-        logger.info(f"Checking if we should create record for previous month: {prev_month_str}")
-        return True  # For now, always try to create previous month record if we have any data
-    
     async def check_series_for_update(self, series_id: str, series_name: str, timeframe: str) -> bool:
         """
         Check if a specific series has updates available
@@ -873,23 +651,6 @@ class FREDDataScheduler:
         except Exception as e:
             logger.error(f"Failed to fetch latest date from {table_name}: {e}")
             return None
-    
-    async def get_database_last_12_months(self, table_name: str) -> List[Dict[str, Any]]:
-        """Get the last 12 months of data from a specific database table for back revision checking"""
-        try:
-            response = db_service.supabase.table(table_name)\
-                .select("*")\
-                .order('observation_date', desc=True)\
-                .limit(12)\
-                .execute()
-            
-            if response.data:
-                logger.info(f"Retrieved {len(response.data)} records from {table_name} for back revision check")
-                return response.data
-            return []
-        except Exception as e:
-            logger.error(f"Failed to get last 12 months from {table_name}: {e}")
-            return []
     
     async def get_latest_database_record(self, table_name: str) -> Optional[Dict[str, Any]]:
         """Get the complete latest record from a database table"""
