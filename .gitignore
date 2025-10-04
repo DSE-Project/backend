@@ -38,3 +38,5 @@ htmlcov/
 # Jupyter notebooks for dataset exploration (if any)
 /notebooks/
 *.ipynb
+
+/tests/
