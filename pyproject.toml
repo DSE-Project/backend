@@ -95,3 +95,8 @@ dependencies = [
     "wheel==0.45.1",
     "wrapt==1.17.3",
 ]
+
+[tool.pytest.ini_options]
+filterwarnings = [
+    "ignore::DeprecationWarning"
+]
