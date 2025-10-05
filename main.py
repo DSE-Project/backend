@@ -68,7 +68,13 @@ app = FastAPI(
 # Add CORS middleware for frontend integration
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Configure this properly for production
+    #allow_origins=["*"],  # Configure this properly for production
+    allow_origins=[
+        "http://localhost:5173",
+        "https://localhost:5173",
+        "http://127.0.0.1:5173",
+        "https://127.0.0.1:5173"
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -204,27 +210,6 @@ async def shutdown_event():
 
 class ReportRequest(BaseModel):
     htmlContent: str
-
-# @app.post("/generate-report")
-# async def generate_report(request: ReportRequest):
-#     pdf_bytes = pdfkit.from_string(request.htmlContent, False, configuration=config)
-#     pdf_file = BytesIO(pdf_bytes)
-#     pdf_file.seek(0)
-#     return StreamingResponse(
-#         pdf_file,
-#         media_type="application/pdf",
-#         headers={"Content-Disposition": "attachment; filename=report.pdf"}
-#     )
-
-# @app.get("/generate-report")
-# async def generate_report(url: str = Query(...)):
-#     # Playwright can now access the public /reports-print route
-#     pdf_file = await run_in_threadpool(render_url_to_pdf_sync, url)
-#     return StreamingResponse(
-#         pdf_file,
-#         media_type="application/pdf",
-#         headers={"Content-Disposition": "attachment; filename={filename}"}
-#     )
 
 @app.get("/generate-report")
 async def generate_report(url: str = Query(...), filename: str = Query("report.pdf")):
