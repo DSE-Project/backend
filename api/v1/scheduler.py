@@ -1,7 +1,7 @@
+from datetime import datetime, timedelta
 from fastapi import APIRouter, HTTPException, BackgroundTasks
 from pydantic import BaseModel
 from typing import Optional, Dict, Any, List
-from datetime import datetime
 import logging
 
 from services.fred_data_scheduler import fred_scheduler
@@ -146,12 +146,12 @@ async def scheduler_health_check():
         if stats['statistics']['last_run']:
             try:
                 last_run = datetime.fromisoformat(stats['statistics']['last_run'].replace('Z', '+00:00'))
-                days_since_last_run = (datetime.now() - last_run.replace(tzinfo=None)).days
+                days_since_last_run = (datetime.now().replace(tzinfo=last_run.tzinfo) - last_run).days
                 if days_since_last_run > 8:
                     is_healthy = False
                     issues.append(f"Last run was {days_since_last_run} days ago")
-            except:
-                pass
+            except Exception as date_error:
+                issues.append(f"Could not parse last run date: {date_error}")
         
         return {
             "healthy": is_healthy,
@@ -168,12 +168,12 @@ async def scheduler_health_check():
         }
         
     except Exception as e:
-        logger.error(f"Error in scheduler health check: {e}")
+        logger.error(f"Health check failed: {e}")
         return {
             "healthy": False,
-            "status": "unhealthy",
-            "issues": [f"Health check failed: {str(e)}"],
-            "error": str(e)
+            "status": "unhealthy", 
+            "issues": [f"Health check error: {str(e)}"],
+            "scheduler_running": False
         }
 
 @router.get("/scheduler/last-update/{timeframe}")
@@ -184,19 +184,13 @@ async def get_last_update_info(timeframe: str):
     
     try:
         stats = fred_scheduler.get_stats()
-        
-        # Get the latest database record for this timeframe
-        table_name = f'historical_data_{timeframe}'
-        latest_record = await fred_scheduler.get_latest_database_record(table_name)
+        last_update = stats['last_update_times'].get(timeframe)
         
         return {
             "timeframe": timeframe,
-            "last_scheduler_update": stats['last_update_times'].get(timeframe),
-            "latest_database_record": {
-                "date": latest_record.get('observation_date') if latest_record else None,
-                "record_count": 1 if latest_record else 0
-            },
-            "table_name": table_name
+            "last_update": last_update,
+            "scheduler_running": stats['scheduler_running'],
+            "statistics": stats['statistics']
         }
         
     except Exception as e:

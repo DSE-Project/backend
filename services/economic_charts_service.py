@@ -6,6 +6,7 @@ import logging
 from fredapi import Fred
 import os
 from dotenv import load_dotenv
+from utils.fred_data_cache import fred_data_cache, cache_fred_data
 
 # Load environment variables from .env file
 load_dotenv()
@@ -80,9 +81,10 @@ class EconomicChartsService:
             }
         }
 
+    @cache_fred_data(lambda self, period="12m", indicators=None: fred_data_cache.get_economic_charts_cache_key(period, indicators))
     async def get_historical_data(self, period: str = "12m", indicators: Optional[List[str]] = None) -> Dict[str, Any]:
         """
-        Get historical data for economic indicators from FRED API
+        Get historical data for economic indicators from FRED API (cached for 30 minutes)
         
         Args:
             period: Time period (6m, 12m, 24m, all)
@@ -120,7 +122,8 @@ class EconomicChartsService:
                     'total_points': len(data['dates']),
                     'start_date': data['dates'][0] if data['dates'] else None,
                     'end_date': data['dates'][-1] if data['dates'] else None,
-                    'source': 'Federal Reserve Economic Data (FRED)'
+                    'source': 'Federal Reserve Economic Data (FRED)',
+                    'cached': False  # Fresh data
                 }
             }
             
@@ -147,9 +150,10 @@ class EconomicChartsService:
             logger.error(f"Error in get_historical_data: {str(e)}")
             raise e
 
+    @cache_fred_data(lambda self: fred_data_cache.get_economic_charts_cache_key("5y_stats", ["all"]))
     async def get_summary_statistics(self) -> Dict[str, Any]:
         """
-        Get summary statistics for economic indicators using FRED data
+        Get summary statistics for economic indicators using FRED data (cached for 30 minutes)
         
         Returns:
             Dictionary containing correlation matrix and descriptive statistics

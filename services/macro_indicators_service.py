@@ -7,6 +7,7 @@ from dataclasses import dataclass
 import json
 import os
 from dotenv import load_dotenv
+from utils.fred_data_cache import fred_data_cache, cache_fred_data
 
 # Load environment variables
 load_dotenv()
@@ -83,8 +84,9 @@ class MacroIndicatorsService:
             }
         }
     
+    @cache_fred_data(lambda self: fred_data_cache.get_macro_indicators_cache_key())
     async def get_all_indicators(self) -> Dict[str, Any]:
-        """Fetch all macroeconomic indicators"""
+        """Fetch all macroeconomic indicators (cached for 30 minutes)"""
         try:
             # Fetch real data from FRED API
             real_data = await self._fetch_all_fred_data()
@@ -92,7 +94,8 @@ class MacroIndicatorsService:
             return {
                 "indicators": real_data,
                 "last_updated": datetime.now().isoformat(),
-                "data_sources": ["Federal Reserve Economic Data (FRED)", "Bureau of Labor Statistics", "Institute for Supply Management", "Conference Board"]
+                "data_sources": ["Federal Reserve Economic Data (FRED)", "Bureau of Labor Statistics", "Institute for Supply Management", "Conference Board"],
+                "cached": False  # Fresh data
             }
         
         except Exception as e:
@@ -103,7 +106,8 @@ class MacroIndicatorsService:
             return {
                 "indicators": mock_data,
                 "last_updated": datetime.now().isoformat(),
-                "data_sources": ["Mock Data (API Unavailable)"]
+                "data_sources": ["Mock Data (API Unavailable)"],
+                "cached": False
             }
     
     async def _fetch_all_fred_data(self) -> Dict[str, Dict[str, Any]]:
