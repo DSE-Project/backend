@@ -120,3 +120,6 @@ markers = [
     "unit: marks tests as unit tests"
 ]
 asyncio_mode = "auto"
+filterwarnings = [
+    "ignore::DeprecationWarning"
+]
