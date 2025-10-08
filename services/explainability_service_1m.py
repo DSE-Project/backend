@@ -38,46 +38,29 @@ class ExplainabilityService1M:
             if model_1m is None or scaler_1m is None or historical_data_1m is None:
                 raise RuntimeError("Model, scaler, or historical data not loaded")
             
-            # Prepare background data for SHAP
-            # Use recent historical data as background
-            recent_data = historical_data_1m.tail(num_background_samples + seq_length)
+            # The 1m model needs feature engineering to go from 29 -> 43 features
+            # Use enough data for lag features and STL decomposition
+            recent_data = historical_data_1m.tail(num_background_samples + seq_length + 100)  # Extra padding for lags
             
-            # Create features for background data
-            from services.forecast_service_1m import create_features_vectorized
-            from statsmodels.tsa.seasonal import STL
+            # Create a dummy current month to use the exact same preprocessing as forecast_service_1m
+            from services.fred_data_service_1m import get_latest_database_row, convert_to_input_features
+            latest_row = get_latest_database_row()
+            dummy_features = convert_to_input_features(latest_row)
             
-            df = recent_data.copy()
-            df = create_features_vectorized(df)
+            # Use the EXACT same preprocessing function as forecast_service_1m
+            X_scaled_full, feature_cols, df_processed = preprocess_features_1m(dummy_features, lookback_points=len(recent_data))
             
-            # STL decomposition for fedfunds
-            if 'fedfunds' in df.columns and len(df) >= 24:
-                try:
-                    stl = STL(df['fedfunds'], period=12, robust=True)
-                    res = stl.fit()
-                    df['fedfunds_trend'] = res.trend
-                    df['fedfunds_seasonal'] = res.seasonal
-                    df['fedfunds_resid'] = res.resid
-                except:
-                    df['fedfunds_trend'] = df['fedfunds'].rolling(12, min_periods=1).mean()
-                    df['fedfunds_seasonal'] = 0
-                    df['fedfunds_resid'] = df['fedfunds'] - df['fedfunds_trend']
+            # Take the processed data (now has 43 features)
+            df = df_processed.copy()
             
-            # STL decomposition for UNRATE
-            if 'UNRATE' in df.columns and len(df) >= 24:
-                try:
-                    stl = STL(df['UNRATE'], period=12, robust=True)
-                    res = stl.fit()
-                    df['UNRATE_trend'] = res.trend
-                    df['UNRATE_seasonal'] = res.seasonal
-                    df['UNRATE_resid'] = res.resid
-                except:
-                    df['UNRATE_trend'] = df['UNRATE'].rolling(12, min_periods=1).mean()
-                    df['UNRATE_seasonal'] = 0
-                    df['UNRATE_resid'] = df['UNRATE'] - df['UNRATE_trend']
+            print(f"📊 Final background data: {len(df)} rows, {len(feature_cols)} features")
             
-            df = df.dropna()
-            cols_to_drop = ['recession'] if 'recession' in df.columns else []
-            feature_cols = [c for c in df.columns if c not in cols_to_drop]
+            # Check if we have enough data
+            if len(df) == 0:
+                raise RuntimeError("No data remaining after preprocessing. All rows were dropped due to NaN values.")
+            
+            if len(df) < seq_length:
+                raise RuntimeError(f"Insufficient data after preprocessing: {len(df)} rows, need at least {seq_length} for sequence creation")
             
             X = df[feature_cols].values.astype(np.float32)
             X_scaled = scaler_1m.transform(X).astype(np.float32)
@@ -86,6 +69,9 @@ class ExplainabilityService1M:
             sequences = []
             for i in range(len(X_scaled) - seq_length + 1):
                 sequences.append(X_scaled[i:i+seq_length])
+            
+            if len(sequences) == 0:
+                raise RuntimeError(f"No sequences created. Data length: {len(X_scaled)}, seq_length: {seq_length}")
             
             self.background_data = np.array(sequences[:num_background_samples])
             self.feature_names = feature_cols
@@ -121,7 +107,7 @@ class ExplainabilityService1M:
             if model_1m is None:
                 raise RuntimeError("Model not loaded after initialization")
             
-            # Preprocess features to get the input sequence
+            # Use the exact same preprocessing as the forecast service
             X_scaled, feature_cols, df = preprocess_features_1m(features)
             
             if len(X_scaled) < seq_length:
