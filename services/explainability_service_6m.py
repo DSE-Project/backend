@@ -24,7 +24,7 @@ class ExplainabilityService6M:
         self.background_data = None
         print("🔄 SHAP explainer cache cleared (6M) - will reinitialize on next use")
         
-    def initialize_explainer(self, seq_length=60, num_background_samples=100):
+    def initialize_explainer(self, seq_length=12, num_background_samples=100):
         """Initialize SHAP explainer with background data"""
         try:
             # Ensure model is loaded - MUST be called first
@@ -41,7 +41,9 @@ class ExplainabilityService6M:
             df = recent_data.copy()
             df = df.dropna()
             
-            cols_to_drop = ['recession'] if 'recession' in df.columns else []
+            # Drop columns same as training (adjust based on your training data columns)
+            cols_to_drop = ['recession', 'recession_1m', 'recession_3m', 'recession_6m']
+            cols_to_drop = [c for c in cols_to_drop if c in df.columns]
             feature_cols = [c for c in df.columns if c not in cols_to_drop]
             
             X = df[feature_cols].values.astype(np.float32)
@@ -53,6 +55,9 @@ class ExplainabilityService6M:
             
             self.background_data = np.array(sequences[:num_background_samples])
             self.feature_names = feature_cols
+            
+            print(f"Background data shape: {self.background_data.shape}")
+            print(f"Feature columns ({len(feature_cols)}): {feature_cols}")
             
             # Initialize SHAP explainer with GradientExplainer (most stable for TensorFlow models)
             try:
@@ -70,7 +75,7 @@ class ExplainabilityService6M:
             print(f"❌ Error initializing SHAP explainer (6M): {e}")
             return False
     
-    def get_shap_values(self, features: InputFeatures6M, seq_length=60) -> Dict:
+    def get_shap_values(self, features: InputFeatures6M, seq_length=12) -> Dict:
         """Calculate SHAP values for the given prediction"""
         try:
             if self.explainer is None:
@@ -139,7 +144,7 @@ class ExplainabilityService6M:
             print(f"❌ Error calculating SHAP values (6M): {e}")
             raise RuntimeError(f"SHAP calculation failed: {e}")
     
-    def get_eli5_feature_importance(self, features: InputFeatures6M, seq_length=60) -> Dict:
+    def get_eli5_feature_importance(self, features: InputFeatures6M, seq_length=12) -> Dict:
         """Get ELI5-style feature importance using permutation importance approach"""
         try:
             # Ensure model is loaded
@@ -185,7 +190,7 @@ class ExplainabilityService6M:
             print(f"❌ Error calculating ELI5 feature importance (6M): {e}")
             raise RuntimeError(f"Feature importance calculation failed: {e}")
     
-    def get_combined_explanation(self, features: InputFeatures6M, seq_length=60) -> Dict:
+    def get_combined_explanation(self, features: InputFeatures6M, seq_length=12) -> Dict:
         """Get both SHAP and ELI5 explanations in a combined format"""
         try:
             shap_result = self.get_shap_values(features, seq_length)

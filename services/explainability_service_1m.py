@@ -25,7 +25,7 @@ class ExplainabilityService1M:
         self.background_data = None
         print("🔄 SHAP explainer cache cleared - will reinitialize on next use")
         
-    def initialize_explainer(self, seq_length=60, num_background_samples=100):
+    def initialize_explainer(self, seq_length=12, num_background_samples=100):
         """Initialize SHAP explainer with background data"""
         try:
             # Ensure model is loaded - MUST be called first
@@ -38,9 +38,9 @@ class ExplainabilityService1M:
             if model_1m is None or scaler_1m is None or historical_data_1m is None:
                 raise RuntimeError("Model, scaler, or historical data not loaded")
             
-            # The 1m model needs feature engineering to go from 29 -> 43 features
-            # Use enough data for lag features and STL decomposition
-            recent_data = historical_data_1m.tail(num_background_samples + seq_length + 100)  # Extra padding for lags
+            # The new LSTM+Transformer 1m model uses the unified 29-feature dataset directly
+            # Use enough data for sequence creation with the new shorter sequence length
+            recent_data = historical_data_1m.tail(num_background_samples + seq_length + 50)  # Extra padding for sequences
             
             # Create a dummy current month to use the exact same preprocessing as forecast_service_1m
             from services.fred_data_service_1m import get_latest_database_row_1m, convert_to_input_features_1m
@@ -50,7 +50,7 @@ class ExplainabilityService1M:
             # Use the EXACT same preprocessing function as forecast_service_1m
             X_scaled_full, feature_cols, df_processed = preprocess_features_1m(dummy_features, lookback_points=len(recent_data))
             
-            # Take the processed data (now has 43 features)
+            # Take the processed data (unified 29-feature dataset)
             df = df_processed.copy()
             
             print(f"📊 Final background data: {len(df)} rows, {len(feature_cols)} features")
@@ -94,7 +94,7 @@ class ExplainabilityService1M:
             print(f"❌ Error initializing SHAP explainer: {e}")
             return False
     
-    def get_shap_values(self, features: InputFeatures1M, seq_length=60) -> Dict:
+    def get_shap_values(self, features: InputFeatures1M, seq_length=12) -> Dict:
         """Calculate SHAP values for the given prediction"""
         try:
             # Initialize explainer if not done
@@ -170,7 +170,7 @@ class ExplainabilityService1M:
             print(f"❌ Error calculating SHAP values: {e}")
             raise RuntimeError(f"SHAP calculation failed: {e}")
     
-    def get_eli5_feature_importance(self, features: InputFeatures1M, seq_length=60) -> Dict:
+    def get_eli5_feature_importance(self, features: InputFeatures1M, seq_length=12) -> Dict:
         """Get ELI5-style feature importance using permutation importance approach"""
         try:
             # Ensure model is loaded
@@ -229,7 +229,7 @@ class ExplainabilityService1M:
             print(f"❌ Error calculating ELI5 feature importance: {e}")
             raise RuntimeError(f"Feature importance calculation failed: {e}")
     
-    def get_combined_explanation(self, features: InputFeatures1M, seq_length=60) -> Dict:
+    def get_combined_explanation(self, features: InputFeatures1M, seq_length=12) -> Dict:
         """Get both SHAP and ELI5 explanations in a combined format"""
         try:
             # Get SHAP values
@@ -242,7 +242,7 @@ class ExplainabilityService1M:
             return {
                 "shap_explanation": shap_result,
                 "eli5_explanation": eli5_result,
-                "model_version": "1m_v1.0",
+                "model_version": "lstm_transformer_1m_v1.0",
                 "explanation_method": "SHAP + Permutation Importance"
             }
             
