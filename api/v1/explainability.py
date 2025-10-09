@@ -2,7 +2,7 @@ from fastapi import APIRouter, HTTPException
 from typing import Dict
 import logging
 
-from services.fred_data_service_1m import get_latest_database_row, convert_to_input_features
+from services.fred_data_service_1m import get_latest_database_row_1m, convert_to_input_features_1m
 from services.fred_data_service_3m import get_latest_database_row_3m, convert_to_input_features_3m
 from services.fred_data_service_6m import get_latest_database_row_6m, convert_to_input_features_6m
 from services.explainability_service_1m import get_explanation_1m, explainability_service_1m
@@ -19,12 +19,12 @@ async def explain_1m_prediction():
         logger.info("🔍 Generating explanations for 1M prediction")
         
         # Get latest data from database
-        latest_row = get_latest_database_row()
+        latest_row = get_latest_database_row_1m()
         if not latest_row:
             raise HTTPException(status_code=404, detail="No data available in database")
         
         # Convert to input features
-        features = convert_to_input_features(latest_row)
+        features = convert_to_input_features_1m(latest_row)
         
         # Generate explanation
         explanation = get_explanation_1m(features)
@@ -88,14 +88,14 @@ async def explain_all_predictions():
         logger.info("🔍 Generating explanations for all predictions")
         
         # Get all features
-        latest_row_1m = get_latest_database_row()
+        latest_row_1m = get_latest_database_row_1m()
         latest_row_3m = get_latest_database_row_3m()
         latest_row_6m = get_latest_database_row_6m()
         
         if not latest_row_1m or not latest_row_3m or not latest_row_6m:
             raise HTTPException(status_code=404, detail="Missing data in database")
         
-        features_1m = convert_to_input_features(latest_row_1m)
+        features_1m = convert_to_input_features_1m(latest_row_1m)
         features_3m = convert_to_input_features_3m(latest_row_3m)
         features_6m = convert_to_input_features_6m(latest_row_6m)
         

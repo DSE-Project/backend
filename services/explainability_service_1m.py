@@ -43,9 +43,9 @@ class ExplainabilityService1M:
             recent_data = historical_data_1m.tail(num_background_samples + seq_length + 100)  # Extra padding for lags
             
             # Create a dummy current month to use the exact same preprocessing as forecast_service_1m
-            from services.fred_data_service_1m import get_latest_database_row, convert_to_input_features
-            latest_row = get_latest_database_row()
-            dummy_features = convert_to_input_features(latest_row)
+            from services.fred_data_service_1m import get_latest_database_row_1m, convert_to_input_features_1m
+            latest_row = get_latest_database_row_1m()
+            dummy_features = convert_to_input_features_1m(latest_row)
             
             # Use the EXACT same preprocessing function as forecast_service_1m
             X_scaled_full, feature_cols, df_processed = preprocess_features_1m(dummy_features, lookback_points=len(recent_data))
