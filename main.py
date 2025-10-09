@@ -36,6 +36,7 @@ from api.v1 import economic
 from io import BytesIO
 from services.database_service import db_service
 from middleware.priority_middleware import PriorityMiddleware
+from services.pdf_utils import render_url_to_pdf_sync
 
 # Configure pdfkit for cross-platform compatibility
 # Try to find wkhtmltopdf automatically, or use None if not available
