@@ -13,7 +13,8 @@ from fastapi.responses import StreamingResponse
 from fastapi import HTTPException
 
 import base64
-
+import pandas as pd
+import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -229,28 +230,45 @@ async def generate_report(url: str = Query(...), filename: str = Query("report.p
         headers={"Content-Disposition": f"attachment; filename={filename}"}
     )
 
+# @app.get("/last-two/{table_name}")
+# def get_last_two(table_name: str):
+#     try:
+#         df = db_service.load_last_n_rows(table_name, n=2)
+#         if df is None or df.empty:
+#             raise HTTPException(status_code=404, detail="No data found")
+        
+#         # Convert dataframe to JSON
+#         return df.reset_index().to_dict(orient="records")
+#     except Exception as e:
+#         raise HTTPException(status_code=500, detail=str(e))
+
+
+# @app.get("/last-two/{table_name}")
+# def get_last_two(table_name: str):
+#     try:
+#         df = db_service.load_last_n_rows(table_name, n=2)
+#         if df is None or df.empty:
+#             raise HTTPException(status_code=404, detail="No data found")
+        
+#         # Convert dataframe to JSON
+#         return df.reset_index().to_dict(orient="records")
+#     except Exception as e:
+#         raise HTTPException(status_code=500, detail=str(e))
+
 @app.get("/last-two/{table_name}")
 def get_last_two(table_name: str):
     try:
-        df = db_service.load_last_n_rows(table_name, n=2)
+        df = db_service.load_last_n_rows(table_name, n=10)  # load a few more rows just in case
         if df is None or df.empty:
             raise HTTPException(status_code=404, detail="No data found")
         
-        # Convert dataframe to JSON
-        return df.reset_index().to_dict(orient="records")
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
 
+        df = df.dropna(how="all")
+        df = df.tail(2)
 
-@app.get("/last-two/{table_name}")
-def get_last_two(table_name: str):
-    try:
-        df = db_service.load_last_n_rows(table_name, n=2)
-        if df is None or df.empty:
-            raise HTTPException(status_code=404, detail="No data found")
-        
-        # Convert dataframe to JSON
-        return df.reset_index().to_dict(orient="records")
+        df = df.replace([np.inf, -np.inf], np.nan).fillna(0)
+        return df.reset_index(drop=True).to_dict(orient="records")
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
