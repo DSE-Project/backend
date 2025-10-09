@@ -31,6 +31,7 @@ from api.v1.forecast import router as forecast_router
 from api.v1.yearly_risk import router as yearly_risk_router
 from api.v1.macro_indicators import router as macro_indicators_router
 from api.v1.economic_charts import router as economic_charts_router
+from api.v1.user_reports import router as user_reports_router
 from api.v1 import economic
 
 from io import BytesIO
@@ -112,6 +113,7 @@ app.include_router(economic.router, prefix="/api/v1/economic")
 app.include_router(sentiment_router, prefix="/api/v1/sentiment", tags=["Sentiment Analysis"])
 app.include_router(scheduler_router, prefix="/api/v1", tags=["FRED Data Scheduler"])
 app.include_router(explainability_router, prefix="/api/v1/forecast", tags=["Model Explainability"])
+app.include_router(user_reports_router, tags=["User Reports"])
 
 # FRED Cache monitoring endpoint
 from services.shared_fred_date_service import shared_fred_date_service
