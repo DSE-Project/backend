@@ -1,5 +1,6 @@
 import sys
 import os
+
 import asyncio
 
 # Fix for Playwright on Windows (NotImplementedError)
@@ -18,29 +19,45 @@ import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from fastapi.concurrency import run_in_threadpool
-from services.pdf_utils import render_url_to_pdf_sync
-
-from fastapi import FastAPI, Body
+from fastapi import FastAPI, Query
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
+from fastapi.concurrency import run_in_threadpool
+from pydantic import BaseModel
+from io import BytesIO
+from dotenv import load_dotenv
+
+# Import routers
 from api.v1.forecast import router as forecast_router
-from api.v1.yearly_risk import router as yearly_risk_router
-from api.v1.simulate import router as simulate_router
 from api.v1.yearly_risk import router as yearly_risk_router
 from api.v1.macro_indicators import router as macro_indicators_router
 from api.v1.economic_charts import router as economic_charts_router
-from fastapi.responses import StreamingResponse
 from api.v1 import economic
+
 from io import BytesIO
 from services.database_service import db_service
 from middleware.priority_middleware import PriorityMiddleware
 
-
-config = pdfkit.configuration(wkhtmltopdf=r"C:\\Program Files\\wkhtmltopdf\\bin\\wkhtmltopdf.exe")
+# Configure pdfkit for cross-platform compatibility
+# Try to find wkhtmltopdf automatically, or use None if not available
+try:
+    import shutil
+    wkhtmltopdf_path = shutil.which('wkhtmltopdf')
+    if wkhtmltopdf_path:
+        config = pdfkit.configuration(wkhtmltopdf=wkhtmltopdf_path)
+    else:
+        config = None
+        print("⚠️ wkhtmltopdf not found. PDF generation will not be available.")
+except Exception as e:
+    config = None
+    print(f"⚠️ Could not configure pdfkit: {e}")
 
 from api.v1.sentiment_component import router as sentiment_router
 from api.v1.scheduler import router as scheduler_router
+from api.v1.simulate import router as simulate_router
+from api.v1.explainability import router as explainability_router
 
+# Load environment variables
 from dotenv import load_dotenv
 from playwright.sync_api import sync_playwright
 
@@ -56,7 +73,6 @@ if os.path.exists(env_path):
     load_dotenv(dotenv_path=env_path)
 else:
     print("⚠️ .env file not found. Make sure to create one with SUPABASE_URL and SUPABASE_ANON_KEY")
-
 
 # Create the FastAPI app instance
 app = FastAPI(
@@ -82,11 +98,13 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
 # Add priority request middleware (should be after CORS)
 app.add_middleware(PriorityMiddleware, enable_logging=True)
 
 # Include the routers
 app.include_router(forecast_router, prefix="/api/v1/forecast", tags=["Forecasting"])
+
 app.include_router(yearly_risk_router, prefix="/api/v1", tags=["yearly-risk"])
 app.include_router(macro_indicators_router, prefix="/api/v1", tags=["macro-indicators"])
 app.include_router(economic_charts_router, prefix="/api/v1", tags=["economic-charts"])
@@ -94,6 +112,7 @@ app.include_router(simulate_router, prefix="/api/v1/simulate", tags=["Simulation
 app.include_router(economic.router, prefix="/api/v1/economic")
 app.include_router(sentiment_router, prefix="/api/v1/sentiment", tags=["Sentiment Analysis"])
 app.include_router(scheduler_router, prefix="/api/v1", tags=["FRED Data Scheduler"])
+app.include_router(explainability_router, prefix="/api/v1/forecast", tags=["Model Explainability"])
 
 # FRED Cache monitoring endpoint
 from services.shared_fred_date_service import shared_fred_date_service
@@ -139,6 +158,7 @@ async def read_root():
             "cache_stats": "/api/v1/forecast/cache/stats",
             "cache_clear": "/api/v1/forecast/cache/clear",
             "priority_stats": "/api/v1/forecast/priority/stats"
+
         }
     }
 
@@ -172,7 +192,6 @@ async def startup_event():
         from services.forecast_service_6m import initialize_6m_service
         from services.fred_data_scheduler import fred_scheduler
 
-        
         print("\n🚀 Initializing forecasting services...")
         
         # Initialize 1M service
@@ -180,7 +199,6 @@ async def startup_event():
             print("✅ 1M forecasting service initialized successfully")
         else:
             print("⚠️ Warning: 1M forecasting service failed to initialize")
-        
         
         if initialize_3m_service():
             print("✅ 3M forecasting service initialized successfully")
@@ -216,6 +234,7 @@ async def shutdown_event():
     except Exception as e:
         print(f"⚠️ Warning: Error during shutdown: {e}")
 
+# Pydantic models
 class ReportRequest(BaseModel):
     htmlContent: str
 

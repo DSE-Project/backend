@@ -2,6 +2,7 @@ from fastapi import APIRouter, HTTPException, Query
 from typing import Optional, List
 import logging
 from services.economic_charts_service import EconomicChartsService
+from utils.fred_data_cache import fred_data_cache
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -128,7 +129,9 @@ async def health_check():
                     "/economic-charts/historical-data",
                     "/economic-charts/summary-stats", 
                     "/economic-charts/indicators",
-                    "/economic-charts/health"
+                    "/economic-charts/health",
+                    "/economic-charts/cache/stats",
+                    "/economic-charts/cache/clear"
                 ]
             },
             "message": "Economic charts service health check completed"
@@ -144,3 +147,28 @@ async def health_check():
             },
             "message": "Economic charts service health check failed"
         }
+
+@router.get("/economic-charts/cache/stats")
+async def get_economic_charts_cache_stats():
+    """Get FRED data cache statistics for economic charts"""
+    return {
+        "success": True,
+        "cache_stats": fred_data_cache.get_stats(),
+        "message": "Economic charts FRED cache statistics retrieved successfully"
+    }
+
+@router.post("/economic-charts/cache/clear")
+async def clear_economic_charts_cache():
+    """Clear all cached FRED data for economic charts (admin function)"""
+    try:
+        fred_data_cache.clear()
+        return {
+            "success": True,
+            "message": "Economic charts FRED data cache cleared successfully"
+        }
+    except Exception as e:
+        logger.error(f"Error clearing economic charts FRED cache: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to clear economic charts FRED cache: {str(e)}"
+        )
