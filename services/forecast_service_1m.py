@@ -149,7 +149,7 @@ def load_historical_data_1m():
     """Load historical data from Supabase database"""
     global historical_data_1m
     try:
-        historical_data_1m = db_service.load_historical_data('historical_data')
+        historical_data_1m = db_service.load_historical_data('historical_data_1m')
         if historical_data_1m is not None:
             print(f"✅ Historical data loaded from database: {len(historical_data_1m)} records")
             return True

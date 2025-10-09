@@ -13,7 +13,7 @@ from apscheduler.jobstores.memory import MemoryJobStore
 
 from services.database_service import db_service
 from services.fred_data_service_1m import (
-    SERIES_IDS as SERIES_IDS_1M,
+    SERIES_IDS,
     fetch_latest_observation,
     get_fred_latest_date,
     get_database_latest_date
@@ -64,55 +64,35 @@ class FREDDataScheduler:
             'records_created': 0
         }
         
-        # Configuration
+        # Configuration - all timeframes now use the same unified dataset
         self.series_mappings = {
             '1m': {
                 'table': 'historical_data_1m',
-                'series_ids': SERIES_IDS_1M,
+                'series_ids': SERIES_IDS,
                 'service_module': 'services.fred_data_service_1m'
             },
             '3m': {
                 'table': 'historical_data_3m',
-                'series_ids': self._get_3m_series_ids(),
+                'series_ids': SERIES_IDS,
                 'service_module': 'services.fred_data_service_3m'
             },
             '6m': {
                 'table': 'historical_data_6m',
-                'series_ids': self._get_6m_series_ids(),
+                'series_ids': SERIES_IDS,
                 'service_module': 'services.fred_data_service_6m'
             }
         }
         
-        # Define quarterly series that need forward-filling
+        # Define quarterly series that need forward-filling (unified across all timeframes)
         self.quarterly_series = {
             '1m': ['GDP', 'REALGDP', 'PSTAX', 'COMREAL'],
-            '3m': ['GDP'],
-            '6m': ['GDP']
+            '3m': ['GDP', 'REALGDP', 'PSTAX', 'COMREAL'],
+            '6m': ['GDP', 'REALGDP', 'PSTAX', 'COMREAL']
         }
         
         self._running = False
     
-    def _get_3m_series_ids(self) -> Dict[str, str]:
-        """Get series IDs for 3-month model - placeholder for now"""
-        # Import from 3m service when available
-        try:
-            from services.fred_data_service_3m import SERIES_IDS_3M 
-            return SERIES_IDS_3M
-        except ImportError:
-            # Fallback to 1m series for now
-            return SERIES_IDS_1M
-    
-    def _get_6m_series_ids(self) -> Dict[str, str]:
-        """Get series IDs for 6-month model"""
-        # Import from 6m service when available
-        try:
-            from services.fred_data_service_6m import SERIES_IDS_6M
-            logger.debug(f"Loaded 6m series IDs: {len(SERIES_IDS_6M)} series")
-            return SERIES_IDS_6M
-        except ImportError as e:
-            logger.warning(f"Could not import 6m series IDs: {e}, falling back to 1m series")
-            # Fallback to 1m series for now
-            return SERIES_IDS_1M
+
     
     async def start_scheduler(self):
         """Start the scheduler with weekly FRED data checks"""
@@ -403,9 +383,9 @@ class FREDDataScheduler:
 
     
     def _is_weekly_series(self, series_name: str) -> bool:
-        """Check if a series is weekly frequency (like ICSA)"""
-        weekly_series = ['ICSA', 'CCSA', 'CONTINUED', 'INITIAL']  # Add more as needed
-        return any(weekly in series_name.upper() for weekly in weekly_series)
+        """Check if a series is weekly frequency - unified dataset uses only monthly data"""
+        # The unified dataset no longer includes weekly series like ICSA
+        return False
     
     def _same_month(self, date1: str, date2: str) -> bool:
         """Check if two dates are in the same month"""
@@ -624,12 +604,6 @@ class FREDDataScheduler:
                     if quarterly_value is not None:
                         month_data[series_name] = quarterly_value
                 
-                elif self._is_weekly_series(series_name):
-                    # Handle weekly data (ICSA) - calculate monthly average
-                    weekly_average = self.calculate_monthly_average_from_weekly(observations, month_dt)
-                    if weekly_average is not None:
-                        month_data[series_name] = weekly_average
-                
                 else:
                     # Handle monthly data - get the value for this specific month
                     monthly_value = self.get_monthly_value(observations, month_dt)
@@ -678,21 +652,7 @@ class FREDDataScheduler:
         
         return None
     
-    def calculate_monthly_average_from_weekly(self, observations: List[Dict[str, Any]], month_dt: datetime) -> Optional[float]:
-        """Calculate monthly average from weekly observations (for ICSA)"""
-        month_values = []
-        
-        for obs in observations:
-            obs_dt = pd.to_datetime(obs['date'])
-            if obs_dt.year == month_dt.year and obs_dt.month == month_dt.month:
-                month_values.append(obs['value'])
-        
-        if month_values:
-            average = sum(month_values) / len(month_values)
-            logger.debug(f"Calculated monthly average for {month_dt.strftime('%Y-%m')}: {average} from {len(month_values)} weekly observations")
-            return average
-        
-        return None
+
     
     def get_monthly_value(self, observations: List[Dict[str, Any]], month_dt: datetime) -> Optional[float]:
         """Get the monthly value for a specific month"""

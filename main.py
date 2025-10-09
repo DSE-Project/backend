@@ -28,7 +28,7 @@ from dotenv import load_dotenv
 
 # Import routers
 from api.v1.forecast import router as forecast_router
-from api.v1.yearly_risk import router as yearly_risk_router
+# from api.v1.yearly_risk import router as yearly_risk_router
 from api.v1.macro_indicators import router as macro_indicators_router
 from api.v1.economic_charts import router as economic_charts_router
 from api.v1 import economic
@@ -55,7 +55,7 @@ except Exception as e:
 from api.v1.sentiment_component import router as sentiment_router
 from api.v1.scheduler import router as scheduler_router
 from api.v1.simulate import router as simulate_router
-from api.v1.explainability import router as explainability_router
+# from api.v1.explainability import router as explainability_router
 
 # Load environment variables
 from dotenv import load_dotenv
@@ -105,14 +105,14 @@ app.add_middleware(PriorityMiddleware, enable_logging=True)
 # Include the routers
 app.include_router(forecast_router, prefix="/api/v1/forecast", tags=["Forecasting"])
 
-app.include_router(yearly_risk_router, prefix="/api/v1", tags=["yearly-risk"])
+# app.include_router(yearly_risk_router, prefix="/api/v1", tags=["yearly-risk"])
 app.include_router(macro_indicators_router, prefix="/api/v1", tags=["macro-indicators"])
 app.include_router(economic_charts_router, prefix="/api/v1", tags=["economic-charts"])
 app.include_router(simulate_router, prefix="/api/v1/simulate", tags=["Simulation"])
 app.include_router(economic.router, prefix="/api/v1/economic")
 app.include_router(sentiment_router, prefix="/api/v1/sentiment", tags=["Sentiment Analysis"])
 app.include_router(scheduler_router, prefix="/api/v1", tags=["FRED Data Scheduler"])
-app.include_router(explainability_router, prefix="/api/v1/forecast", tags=["Model Explainability"])
+# app.include_router(explainability_router, prefix="/api/v1/forecast", tags=["Model Explainability"])
 
 # FRED Cache monitoring endpoint
 from services.shared_fred_date_service import shared_fred_date_service
@@ -143,7 +143,6 @@ async def read_root():
             "1m_prediction": "/api/v1/forecast/predict/1m",
             "3m_prediction": "/api/v1/forecast/predict/3m", 
             "6m_prediction": "/api/v1/forecast/predict/6m",
-            "yearly_risk": "/api/v1/yearly-risk",
             "macro_indicators": "/api/v1/macro-indicators",
             "economic_charts": "/api/v1/economic-charts/historical-data",
             "chart_statistics": "/api/v1/economic-charts/summary-stats",
