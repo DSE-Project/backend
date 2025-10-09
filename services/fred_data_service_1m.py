@@ -233,7 +233,7 @@ def insert_fred_data_to_database(fred_data: Dict[str, Any]) -> bool:
         logger.error(f"Failed to insert FRED data into database: {type(e).__name__}: {str(e)}")
         return False
 
-def get_latest_database_row() -> Optional[Dict[str, Any]]:
+def get_latest_database_row_1m() -> Optional[Dict[str, Any]]:
     """Get the latest row from the database"""
     try:
         response = db_service.supabase.table('historical_data_1m')\
@@ -249,7 +249,7 @@ def get_latest_database_row() -> Optional[Dict[str, Any]]:
         logger.error(f"Failed to get latest database row: {type(e).__name__}: {str(e)}")
         return None
 
-def convert_to_input_features(data_row: Dict[str, Any]) -> InputFeatures1M:
+def convert_to_input_features_1m(data_row: Dict[str, Any]) -> InputFeatures1M:
     """Convert database row or FRED data to InputFeatures1M format"""
     try:
         # Format observation_date
@@ -342,11 +342,11 @@ async def get_latest_prediction_1m() -> ForecastResponse1M:
             
             # Use database data as fallback
             logger.info("Using database data as fallback due to FRED API failure")
-            latest_row = get_latest_database_row()
+            latest_row = get_latest_database_row_1m()
             if not latest_row:
                 raise RuntimeError("Failed to get latest row from database")
             
-            features = convert_to_input_features(latest_row)
+            features = convert_to_input_features_1m(latest_row)
             prediction_result = predict_1m(features)
             
             # Add metadata
@@ -368,12 +368,12 @@ async def get_latest_prediction_1m() -> ForecastResponse1M:
         if db_latest_date and fred_latest_date == db_latest_date:
             # ✅ OPTIMAL PATH - Use database data (fast, scheduler working correctly)
             logger.info("✅ Using existing database data (dates match) - scheduler working correctly")
-            latest_row = get_latest_database_row()
+            latest_row = get_latest_database_row_1m()
             if not latest_row:
                 raise RuntimeError("Failed to get latest row from database")
             
             # Convert to input features
-            features = convert_to_input_features(latest_row)
+            features = convert_to_input_features_1m(latest_row)
             
         else:
             # ⚠️ FALLBACK PATH - Fetch from FRED (slower, scheduler may need attention)
@@ -384,9 +384,9 @@ async def get_latest_prediction_1m() -> ForecastResponse1M:
                 # Fallback to database if available
                 if db_latest_date:
                     logger.warning("FRED fetch failed, falling back to database data")
-                    latest_row = get_latest_database_row()
+                    latest_row = get_latest_database_row_1m()
                     if latest_row:
-                        features = convert_to_input_features(latest_row)
+                        features = convert_to_input_features_1m(latest_row)
                         prediction_result = predict_1m(features)
                         prediction_result.feature_importance = {
                             "data_source": "database_fallback",
@@ -423,7 +423,7 @@ async def get_latest_prediction_1m() -> ForecastResponse1M:
                         data_row[name] = 0.0
             
             data_row["observation_date"] = observation_date
-            features = convert_to_input_features(data_row)
+            features = convert_to_input_features_1m(data_row)
         
         # Step 4: Make prediction
         logger.info("Step 4: Making prediction")

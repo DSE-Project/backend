@@ -8,41 +8,29 @@ if sys.platform.startswith("win"):
     asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
 
 import pdfkit
-from pydantic import BaseModel
-from fastapi import FastAPI, Query
-from fastapi.responses import StreamingResponse
-from fastapi import HTTPException
 
-import base64
-import pandas as pd
-import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from fastapi import FastAPI, Query
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
-from fastapi.concurrency import run_in_threadpool
-from pydantic import BaseModel
-from io import BytesIO
 from dotenv import load_dotenv
 
 # Import routers
 from api.v1.forecast import router as forecast_router
-from api.v1.yearly_risk import router as yearly_risk_router
+# from api.v1.yearly_risk import router as yearly_risk_router
 from api.v1.macro_indicators import router as macro_indicators_router
 from api.v1.economic_charts import router as economic_charts_router
 from api.v1 import economic
+from api.v1.generate_report import router as generate_report_router
 
-from io import BytesIO
-from services.database_service import db_service
 from middleware.priority_middleware import PriorityMiddleware
-from services.pdf_utils import render_url_to_pdf_sync
+
 # Configure pdfkit for cross-platform compatibility
 # Try to find wkhtmltopdf automatically, or use None if not available
 try:
     import shutil
-    wkhtmltopdf_path = shutil.which('wkhtmltopdf')
+    wkhtmltopdf_path = "C:\\Program Files\\wkhtmltopdf\\bin\\wkhtmltopdf.exe"
     if wkhtmltopdf_path:
         config = pdfkit.configuration(wkhtmltopdf=wkhtmltopdf_path)
     else:
@@ -105,7 +93,7 @@ app.add_middleware(PriorityMiddleware, enable_logging=True)
 # Include the routers
 app.include_router(forecast_router, prefix="/api/v1/forecast", tags=["Forecasting"])
 
-app.include_router(yearly_risk_router, prefix="/api/v1", tags=["yearly-risk"])
+# app.include_router(yearly_risk_router, prefix="/api/v1", tags=["yearly-risk"])
 app.include_router(macro_indicators_router, prefix="/api/v1", tags=["macro-indicators"])
 app.include_router(economic_charts_router, prefix="/api/v1", tags=["economic-charts"])
 app.include_router(simulate_router, prefix="/api/v1/simulate", tags=["Simulation"])
@@ -113,6 +101,7 @@ app.include_router(economic.router, prefix="/api/v1/economic")
 app.include_router(sentiment_router, prefix="/api/v1/sentiment", tags=["Sentiment Analysis"])
 app.include_router(scheduler_router, prefix="/api/v1", tags=["FRED Data Scheduler"])
 app.include_router(explainability_router, prefix="/api/v1/forecast", tags=["Model Explainability"])
+app.include_router(generate_report_router, prefix="/api/v1", tags=["Reports & Database"])
 
 # FRED Cache monitoring endpoint
 from services.shared_fred_date_service import shared_fred_date_service
@@ -143,7 +132,6 @@ async def read_root():
             "1m_prediction": "/api/v1/forecast/predict/1m",
             "3m_prediction": "/api/v1/forecast/predict/3m", 
             "6m_prediction": "/api/v1/forecast/predict/6m",
-            "yearly_risk": "/api/v1/yearly-risk",
             "macro_indicators": "/api/v1/macro-indicators",
             "economic_charts": "/api/v1/economic-charts/historical-data",
             "chart_statistics": "/api/v1/economic-charts/summary-stats",
@@ -155,10 +143,13 @@ async def read_root():
             "fred_cache_clear": "/api/v1/macro-indicators/cache/clear",
             "economic_charts_cache_stats": "/api/v1/economic-charts/cache/stats",
             "economic_charts_cache_clear": "/api/v1/economic-charts/cache/clear",
-            "cache_stats": "/api/v1/forecast/cache/stats",
-            "cache_clear": "/api/v1/forecast/cache/clear",
-            "priority_stats": "/api/v1/forecast/priority/stats"
-
+            "priority_stats": "/api/v1/forecast/priority/stats",
+            "explainability_1m": "/api/v1/forecast/explain/1m",
+            "explainability_3m": "/api/v1/forecast/explain/3m",
+            "explainability_6m": "/api/v1/forecast/explain/6m",
+            "explainability_all": "/api/v1/forecast/explain/all",
+            "generate_report": "/api/v1/generate-report",
+            "last_two_records": "/api/v1/last-two/{table_name}"
         }
     }
 
@@ -171,21 +162,7 @@ async def health_check():
 @app.on_event("startup")
 async def startup_event():
     """Initialize services on startup"""
-    try:
-        # 1️⃣ Load historical data
-        df = db_service.load_historical_data("historical_data_1m")
-    
-        
-        # 2️⃣ Validate with Pandera
-        if df is not None:
-            validated_df = db_service.validate_dataframe(df, "historical_data_1m")
-            if validated_df is None:
-                print("⚠️ Data validation failed. Check logs for details.")
-            else:
-                print("✅ Data validation passed for historical_data_1m")
-        else:
-            print("⚠️ No data loaded from historical_data_1m")
-
+    try:       
         # Import here to avoid circular imports
         from services.forecast_service_1m import initialize_1m_service
         from services.forecast_service_3m import initialize_3m_service
@@ -234,62 +211,7 @@ async def shutdown_event():
     except Exception as e:
         print(f"⚠️ Warning: Error during shutdown: {e}")
 
-# Pydantic models
-class ReportRequest(BaseModel):
-    htmlContent: str
 
-@app.get("/generate-report")
-async def generate_report(url: str = Query(...), filename: str = Query("report.pdf")):
-    pdf_bytes = await run_in_threadpool(render_url_to_pdf_sync, url)
-    pdf_file = BytesIO(pdf_bytes)
-    pdf_file.seek(0)
-    return StreamingResponse(
-        pdf_file,
-        media_type="application/pdf",
-        headers={"Content-Disposition": f"attachment; filename={filename}"}
-    )
-
-# @app.get("/last-two/{table_name}")
-# def get_last_two(table_name: str):
-#     try:
-#         df = db_service.load_last_n_rows(table_name, n=2)
-#         if df is None or df.empty:
-#             raise HTTPException(status_code=404, detail="No data found")
-        
-#         # Convert dataframe to JSON
-#         return df.reset_index().to_dict(orient="records")
-#     except Exception as e:
-#         raise HTTPException(status_code=500, detail=str(e))
-
-
-# @app.get("/last-two/{table_name}")
-# def get_last_two(table_name: str):
-#     try:
-#         df = db_service.load_last_n_rows(table_name, n=2)
-#         if df is None or df.empty:
-#             raise HTTPException(status_code=404, detail="No data found")
-        
-#         # Convert dataframe to JSON
-#         return df.reset_index().to_dict(orient="records")
-#     except Exception as e:
-#         raise HTTPException(status_code=500, detail=str(e))
-
-@app.get("/last-two/{table_name}")
-def get_last_two(table_name: str):
-    try:
-        df = db_service.load_last_n_rows(table_name, n=10)  # load a few more rows just in case
-        if df is None or df.empty:
-            raise HTTPException(status_code=404, detail="No data found")
-        
-
-        df = df.dropna(how="all")
-        df = df.tail(2)
-
-        df = df.replace([np.inf, -np.inf], np.nan).fillna(0)
-        return df.reset_index(drop=True).to_dict(orient="records")
-
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
 
 
 if __name__ == "__main__":

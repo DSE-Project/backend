@@ -25,7 +25,7 @@ class FeatureDefinition(BaseModel):
         }
 
 class ModelFeatureDefinitions(BaseModel):
-    """Feature definitions for a specific model"""
+    """Feature definitions for a specific model (all models use the same unified dataset)"""
     model_period: str  # "1m", "3m", "6m"
     features: List[FeatureDefinition]
     total_features: int
@@ -46,13 +46,13 @@ class ModelFeatureDefinitions(BaseModel):
                         "is_important": 1
                     }
                 ],
-                "total_features": 25,
-                "important_features_count": 20
+                "total_features": 29,
+                "important_features_count": 29
             }
         }
 
 class AllFeatureDefinitions(BaseModel):
-    """Feature definitions for all models"""
+    """Feature definitions for all models (unified dataset shared across all models)"""
     models: Dict[str, ModelFeatureDefinitions]
     timestamp: str
     
@@ -63,8 +63,8 @@ class AllFeatureDefinitions(BaseModel):
                     "1m": {
                         "model_period": "1m",
                         "features": [],
-                        "total_features": 25,
-                        "important_features_count": 20
+                        "total_features": 29,
+                        "important_features_count": 29
                     }
                 },
                 "timestamp": "2025-09-12T10:30:00Z"
