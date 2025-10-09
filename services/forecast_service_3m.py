@@ -151,7 +151,7 @@ def load_historical_data_3m():
     """Load historical data from Supabase database"""
     global historical_data_3m
     try:
-        historical_data_3m = db_service.load_historical_data('historical_data_3m')
+        historical_data_3m = db_service.load_historical_data('historical_data')
         if historical_data_3m is not None:
             print(f"✅ Historical data loaded from database: {len(historical_data_3m)} records")
             return True
@@ -189,7 +189,7 @@ def preprocess_features_3m(features: InputFeatures3M, lookback_points=120) -> tu
     Key differences from previous model:
     - Uses sequence length of 12 (vs 60)
     - Different data preparation for hybrid architecture
-    - Same feature engineering as 1M model
+    - Simplified preprocessing to match training data
     """
     try:
         # Load historical data if not already loaded
@@ -204,6 +204,7 @@ def preprocess_features_3m(features: InputFeatures3M, lookback_points=120) -> tu
         historical_data = historical_data.astype(np.float32)
         
         print(f"Using only last {len(historical_data)} data points for processing")
+        print(f"Historical data columns: {list(historical_data.columns)}")
         
         # Convert Pydantic model to dict
         current_data = features.current_month_data.model_dump()
@@ -217,38 +218,9 @@ def preprocess_features_3m(features: InputFeatures3M, lookback_points=120) -> tu
                                       index=[pd.to_datetime(filtered_current_data["observation_date"])])
         current_month_df = current_month_df.drop(columns=['observation_date'])
         
-        # Combine and process
+        # Combine data
         df = pd.concat([historical_data, current_month_df], copy=False)
-        df = create_features_vectorized(df)
-        
-        # STL decomposition for fedfunds
-        if 'fedfunds' in df.columns and len(df) >= 24:
-            try:
-                stl = STL(df['fedfunds'], period=12, robust=True)
-                res = stl.fit()
-                df['fedfunds_trend'] = res.trend
-                df['fedfunds_seasonal'] = res.seasonal
-                df['fedfunds_resid'] = res.resid
-            except:
-                print("Warning: STL decomposition failed for fedfunds, using fallback")
-                df['fedfunds_trend'] = df['fedfunds'].rolling(12, min_periods=1).mean()
-                df['fedfunds_seasonal'] = 0
-                df['fedfunds_resid'] = df['fedfunds'] - df['fedfunds_trend']
-        
-        # STL decomposition for UNRATE
-        if 'UNRATE' in df.columns and len(df) >= 24:
-            try:
-                stl = STL(df['UNRATE'], period=12, robust=True)
-                res = stl.fit()
-                df['UNRATE_trend'] = res.trend
-                df['UNRATE_seasonal'] = res.seasonal
-                df['UNRATE_resid'] = res.resid
-            except:
-                print("Warning: STL decomposition failed for UNRATE, using fallback")
-                df['UNRATE_trend'] = df['UNRATE'].rolling(12, min_periods=1).mean()
-                df['UNRATE_seasonal'] = 0
-                df['UNRATE_resid'] = df['UNRATE'] - df['UNRATE_trend']
-        
+
         # Final processing - match training preprocessing
         df = df.dropna()
         
@@ -256,6 +228,8 @@ def preprocess_features_3m(features: InputFeatures3M, lookback_points=120) -> tu
         cols_to_drop = ['recession', 'recession_1m', 'recession_3m', 'recession_6m']
         cols_to_drop = [c for c in cols_to_drop if c in df.columns]
         feature_cols = [c for c in df.columns if c not in cols_to_drop]
+        
+        print(f"Feature columns ({len(feature_cols)}): {feature_cols}")
         
         X = df[feature_cols].values.astype(np.float32)
         X_scaled = scaler_3m.transform(X).astype(np.float32)
