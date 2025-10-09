@@ -171,21 +171,7 @@ async def health_check():
 @app.on_event("startup")
 async def startup_event():
     """Initialize services on startup"""
-    try:
-        # 1️⃣ Load historical data
-        df = db_service.load_historical_data("historical_data_1m")
-    
-        
-        # 2️⃣ Validate with Pandera
-        if df is not None:
-            validated_df = db_service.validate_dataframe(df, "historical_data_1m")
-            if validated_df is None:
-                print("⚠️ Data validation failed. Check logs for details.")
-            else:
-                print("✅ Data validation passed for historical_data_1m")
-        else:
-            print("⚠️ No data loaded from historical_data_1m")
-
+    try:       
         # Import here to avoid circular imports
         from services.forecast_service_1m import initialize_1m_service
         from services.forecast_service_3m import initialize_3m_service
