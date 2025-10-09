@@ -30,7 +30,7 @@ from middleware.priority_middleware import PriorityMiddleware
 # Try to find wkhtmltopdf automatically, or use None if not available
 try:
     import shutil
-    wkhtmltopdf_path = shutil.which('wkhtmltopdf')
+    wkhtmltopdf_path = "C:\\Program Files\\wkhtmltopdf\\bin\\wkhtmltopdf.exe"
     if wkhtmltopdf_path:
         config = pdfkit.configuration(wkhtmltopdf=wkhtmltopdf_path)
     else:
