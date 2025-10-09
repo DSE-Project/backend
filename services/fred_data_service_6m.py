@@ -1,9 +1,10 @@
 import httpx
 import os
 import pandas as pd
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Optional, Dict, Any
 import logging
+import asyncio
 from services.database_service import db_service
 from services.forecast_service_6m import predict_6m, initialize_6m_service
 from services.shared_fred_date_service import shared_fred_date_service
@@ -15,36 +16,42 @@ logger = logging.getLogger(__name__)
 FRED_API_KEY = os.getenv("FRED_API_KEY")
 BASE_URL = "https://api.stlouisfed.org/fred/series/observations"
 
-# Series IDs mapping for 6M model
-SERIES_IDS_6M = {
-    "PSTAX": "W055RC1Q027SBEA",
-    "USWTRADE": "USWTRADE",
-    "MANEMP": "MANEMP",
-    "CPIAPP": "CPIAPPSL",
-    "CSUSHPISA": "CSUSHPISA",
-    "ICSA": "ICSA",  
+# Series IDs mapping
+SERIES_IDS = {
     "fedfunds": "FEDFUNDS",
-    "BBKMLEIX": "BBKMLEIX",
     "TB3MS": "TB3MS",
-    "USINFO": "USINFO",
-    "PPIACO": "PPIACO",
-    "CPIMEDICARE": "CPIMEDSL",
-    "UNEMPLOY": "UNEMPLOY",
+    "TB6MS": "TB6MS",
     "TB1YR": "TB1YR",
+    "USTPU": "USTPU",
     "USGOOD": "USGOOD",
-    "CPIFOOD": "CUSR0000SAF11",
-    "UMCSENT": "UMCSENT",
     "SRVPRD": "SRVPRD",
+    "USCONS": "USCONS",
+    "MANEMP": "MANEMP",
+    "USWTRADE": "USWTRADE",
+    "USTRADE": "USTRADE",
+    "USINFO": "USINFO",
+    "UNRATE": "UNRATE",
+    "UNEMPLOY": "UNEMPLOY",
+    "CPIFOOD": "CUSR0000SAF11",
+    "CPIMEDICARE": "CPIMEDSL",
+    "CPIRENT": "CUUR0000SEHA",
+    "CPIAPP": "CPIAPPSL",
     "GDP": "GDP",
-    "INDPRO": "INDPRO",
+    "REALGDP": "GDPC1",
+    "PCEPI": "PCEPI",
+    "PSAVERT": "PSAVERT",
+    "PSTAX": "W055RC1Q027SBEA",
+    "COMREAL": "BOGZ1FL075035503Q",
+    "COMLOAN": "H8B1023NCBCMG",
+    "SECURITYBANK": "H8B1002NCBCMG",
+    "PPIACO": "PPIACO",
+    "M1SL": "M1SL",
+    "M2SL": "M2SL",
     "recession": "USREC"
 }
 
-# Define which series are weekly (need monthly averaging)
-WEEKLY_SERIES = {"ICSA"}
-
-async def fetch_latest_observation_6m(series_id: str) -> Dict[str, Any]:
-    """Fetch latest observation for a specific series from FRED API"""
+async def fetch_latest_observation(series_id: str, timeout: int = 30, max_retries: int = 3) -> Dict[str, Any]:
+    """Fetch latest observation for a specific series from FRED API with retry logic"""
     params = {
         "series_id": series_id,
         "api_key": FRED_API_KEY,
@@ -53,91 +60,63 @@ async def fetch_latest_observation_6m(series_id: str) -> Dict[str, Any]:
         "limit": 1
     }
     
-    async with httpx.AsyncClient() as client:
-        response = await client.get(BASE_URL, params=params)
-        response.raise_for_status()
-        return response.json()
-
-async def fetch_monthly_average_for_weekly_series_6m(series_id: str, target_date: str) -> Optional[float]:
-    """
-    Fetch all weekly observations for a specific month and calculate the average
-    target_date should be in format 'YYYY-MM-DD'
-    """
-    try:
-        # Parse the target date to get year and month
-        target_dt = pd.to_datetime(target_date)
-        year = target_dt.year
-        month = target_dt.month
-        
-        # Calculate the first and last day of the month
-        first_day = f"{year}-{month:02d}-01"
-        if month == 12:
-            last_day = f"{year + 1}-01-01"
-        else:
-            last_day = f"{year}-{month + 1:02d}-01"
-        
-        logger.info(f"Fetching weekly data for 6M {series_id} from {first_day} to {last_day}")
-        
-        # Fetch all observations for the month
-        params = {
-            "series_id": series_id,
-            "api_key": FRED_API_KEY,
-            "file_type": "json",
-            "observation_start": first_day,
-            "observation_end": last_day,
-            "sort_order": "asc"
-        }
-        
-        async with httpx.AsyncClient() as client:
-            response = await client.get(BASE_URL, params=params)
-            response.raise_for_status()
-            data = response.json()
-        
-        if data and "observations" in data and len(data["observations"]) > 0:
-            # Extract valid values (exclude "." values)
-            values = []
-            dates = []
-            
-            for obs in data["observations"]:
-                if obs["value"] != ".":
-                    try:
-                        obs_date = pd.to_datetime(obs["date"])
-                        # Only include observations that are actually in the target month
-                        if obs_date.year == year and obs_date.month == month:
-                            values.append(float(obs["value"]))
-                            dates.append(obs["date"])
-                    except (ValueError, TypeError):
-                        continue
-            
-            if values:
-                monthly_avg = sum(values) / len(values)
-                logger.info(f"Calculated monthly average for 6M {series_id} ({year}-{month:02d}): {monthly_avg:.2f} from {len(values)} observations")
-                logger.info(f"Weekly values: {values}")
-                logger.info(f"Dates used: {dates}")
-                return monthly_avg
+    for attempt in range(max_retries):
+        try:
+            # Add timeout and retry configuration
+            timeout_config = httpx.Timeout(timeout)
+            async with httpx.AsyncClient(timeout=timeout_config) as client:
+                logger.info(f"Attempting to fetch {series_id} (attempt {attempt + 1}/{max_retries})")
+                response = await client.get(BASE_URL, params=params)
+                response.raise_for_status()
+                
+                data = response.json()
+                logger.info(f"Successfully fetched {series_id}")
+                return data
+                
+        except httpx.TimeoutException as e:
+            logger.warning(f"Timeout for {series_id} on attempt {attempt + 1}: {e}")
+            if attempt < max_retries - 1:
+                await asyncio.sleep(1)  # Wait 1 second before retry
             else:
-                logger.warning(f"No valid weekly observations found for 6M {series_id} in {year}-{month:02d}")
-                return None
-        else:
-            logger.warning(f"No observations returned for 6M {series_id} in {year}-{month:02d}")
-            return None
+                raise Exception(f"Timeout after {max_retries} attempts: {e}")
+                
+        except httpx.HTTPStatusError as e:
+            logger.error(f"HTTP error for {series_id} on attempt {attempt + 1}: Status {e.response.status_code} - {e.response.text}")
+            if e.response.status_code == 429:  # Rate limit
+                wait_time = 2 ** attempt  # Exponential backoff
+                logger.info(f"Rate limited, waiting {wait_time} seconds")
+                await asyncio.sleep(wait_time)
+                if attempt < max_retries - 1:
+                    continue
+            raise Exception(f"HTTP {e.response.status_code}: {e.response.text}")
             
-    except Exception as e:
-        logger.error(f"Failed to fetch monthly average for weekly series 6M {series_id}: {e}")
-        return None
+        except httpx.RequestError as e:
+            logger.error(f"Request error for {series_id} on attempt {attempt + 1}: {e}")
+            if attempt < max_retries - 1:
+                await asyncio.sleep(1)
+            else:
+                raise Exception(f"Request error after {max_retries} attempts: {e}")
+                
+        except Exception as e:
+            logger.error(f"Unexpected error for {series_id} on attempt {attempt + 1}: {e}")
+            if attempt < max_retries - 1:
+                await asyncio.sleep(1)
+            else:
+                raise Exception(f"Unexpected error after {max_retries} attempts: {e}")
 
-async def get_fred_latest_date_6m() -> Optional[str]:
+async def get_fred_latest_date() -> Optional[str]:
     """Get the latest observation date from FRED API using shared service"""
     try:
-        logger.info("Getting latest FRED date for 6M using shared service")
+        logger.info("Getting latest FRED date using shared service")
         return await shared_fred_date_service.get_latest_fred_date()
     except Exception as e:
-        logger.error(f"Failed to get latest FRED date for 6M from shared service: {e}")
+        logger.error(f"Failed to get latest FRED date from shared service: {type(e).__name__}: {str(e)}")
         return None
 
-def get_database_latest_date_6m() -> Optional[str]:
+def get_database_latest_date() -> Optional[str]:
     """Get the latest observation date from database"""
     try:
+        logger.info("Fetching latest database date")
         # Get the latest record from historical_data_6m table
         response = db_service.supabase.table('historical_data_6m')\
             .select("observation_date")\
@@ -149,181 +128,61 @@ def get_database_latest_date_6m() -> Optional[str]:
             latest_date = response.data[0]["observation_date"]
             # Convert to FRED format (YYYY-MM-DD)
             db_date = pd.to_datetime(latest_date).strftime('%Y-%m-%d')
-            logger.info(f"Latest database date for 6M: {db_date}")
+            logger.info(f"Latest database date: {db_date}")
             return db_date
-        return None
-    except Exception as e:
-        logger.error(f"Failed to fetch latest database date for 6M: {e}")
-        return None
-
-async def fetch_all_fred_data_6m() -> Optional[Dict[str, Any]]:
-    """Fetch all latest observations from FRED API for 6M model"""
-    try:
-        results = {}
-        all_dates = []  # Collect all dates to find the latest one
-        
-        # First, fetch monthly series to collect all their dates
-        for name, series_id in SERIES_IDS_6M.items():
-            if name not in WEEKLY_SERIES:  # Skip weekly series in first pass
-                try:
-                    data = await fetch_latest_observation_6m(series_id)
-                    if data and "observations" in data and len(data["observations"]) > 0:
-                        obs = data["observations"][0]
-                        obs_date = obs["date"]
-                        all_dates.append(obs_date)
-                        
-                        results[name] = {
-                            "date": obs_date,
-                            "value": float(obs["value"]) if obs["value"] != "." else None
-                        }
-                        logger.info(f"6M {name}: {obs_date} = {obs['value']}")
-                    else:
-                        logger.warning(f"No data found for 6M {name} ({series_id})")
-                        results[name] = None
-                except Exception as e:
-                    logger.error(f"Failed to fetch 6M {name} ({series_id}): {e}")
-                    results[name] = None
-        
-        # Find the latest date among all monthly series
-        if all_dates:
-            # Convert to datetime objects for proper comparison
-            date_objects = [pd.to_datetime(date) for date in all_dates]
-            latest_date_obj = max(date_objects)
-            reference_date = latest_date_obj.strftime('%Y-%m-%d')
-            
-            logger.info(f"All monthly dates for 6M: {sorted(all_dates)}")
-            logger.info(f"Using LATEST date as reference for 6M: {reference_date}")
-            
-            # Update all monthly series to use the reference date
-            # (fetch data for the reference date for series that don't have it)
-            updated_results = {}
-            for name, series_id in SERIES_IDS_6M.items():
-                if name not in WEEKLY_SERIES:
-                    if results[name] and results[name]["date"] == reference_date:
-                        # Already have data for the reference date
-                        updated_results[name] = results[name]
-                    else:
-                        # Need to fetch data for the reference date
-                        try:
-                            # Fetch data for the specific reference month
-                            ref_year = latest_date_obj.year
-                            ref_month = latest_date_obj.month
-                            
-                            # Get data for the reference month
-                            month_data = await fetch_data_for_specific_month_6m(series_id, ref_year, ref_month)
-                            
-                            if month_data:
-                                updated_results[name] = {
-                                    "date": reference_date,
-                                    "value": month_data
-                                }
-                                logger.info(f"6M {name}: Updated to {reference_date} = {month_data}")
-                            else:
-                                logger.warning(f"No data found for 6M {name} in {ref_year}-{ref_month:02d}, using default")
-                                updated_results[name] = {
-                                    "date": reference_date,
-                                    "value": 0.0
-                                }
-                        except Exception as e:
-                            logger.error(f"Failed to fetch 6M {name} for reference date: {e}")
-                            updated_results[name] = {
-                                "date": reference_date,
-                                "value": 0.0
-                            }
-            
-            results = updated_results
-            
-            # Now handle weekly series using the reference date
-            logger.info(f"Using reference date {reference_date} for 6M weekly series calculations")
-            
-            for name in WEEKLY_SERIES:
-                if name in SERIES_IDS_6M:
-                    series_id = SERIES_IDS_6M[name]
-                    try:
-                        # Calculate monthly average for the weekly series
-                        monthly_avg = await fetch_monthly_average_for_weekly_series_6m(series_id, reference_date)
-                        
-                        if monthly_avg is not None:
-                            results[name] = {
-                                "date": reference_date,  # Use the same date as monthly series
-                                "value": monthly_avg
-                            }
-                            logger.info(f"Successfully calculated monthly average for 6M {name}: {monthly_avg}")
-                        else:
-                            logger.warning(f"Could not calculate monthly average for 6M {name}, using default value")
-                            results[name] = {
-                                "date": reference_date,
-                                "value": 0.0  # Default value if calculation fails
-                            }
-                    except Exception as e:
-                        logger.error(f"Failed to fetch monthly average for 6M {name} ({series_id}): {e}")
-                        results[name] = {
-                            "date": reference_date,
-                            "value": 0.0  # Default value on error
-                        }
         else:
-            logger.error("No valid dates found from any monthly series for 6M")
+            logger.info("No data found in database")
             return None
+    except Exception as e:
+        logger.error(f"Failed to fetch latest database date: {type(e).__name__}: {str(e)}")
+        return None
+
+async def fetch_all_fred_data() -> Optional[Dict[str, Any]]:
+    """Fetch all latest observations from FRED API with better error handling"""
+    try:
+        logger.info("Starting to fetch all FRED data")
+        results = {}
+        failed_series = []
         
+        # Add delay between requests to avoid rate limiting
+        for i, (name, series_id) in enumerate(SERIES_IDS.items()):
+            try:
+                # Add small delay between requests
+                if i > 0:
+                    await asyncio.sleep(0.1)  # 100ms delay
+                
+                logger.info(f"Fetching {name} ({series_id}) - {i+1}/{len(SERIES_IDS)}")
+                data = await fetch_latest_observation(series_id, timeout=20)
+                
+                if data and "observations" in data and len(data["observations"]) > 0:
+                    obs = data["observations"][0]
+                    results[name] = {
+                        "date": obs["date"],
+                        "value": float(obs["value"]) if obs["value"] != "." else None
+                    }
+                    logger.info(f"Successfully fetched {name}: {obs['value']}")
+                else:
+                    logger.warning(f"No data found for {name} ({series_id})")
+                    results[name] = None
+                    failed_series.append(name)
+                    
+            except Exception as e:
+                logger.error(f"Failed to fetch {name} ({series_id}): {type(e).__name__}: {str(e)}")
+                results[name] = None
+                failed_series.append(name)
+        
+        if failed_series:
+            logger.warning(f"Failed to fetch {len(failed_series)} series: {failed_series}")
+        
+        logger.info(f"Completed fetching FRED data. Success: {len(results) - len(failed_series)}/{len(results)}")
         return results
+        
     except Exception as e:
-        logger.error(f"Failed to fetch FRED data for 6M: {e}")
+        logger.error(f"Failed to fetch FRED data: {type(e).__name__}: {str(e)}")
         return None
 
-async def fetch_data_for_specific_month_6m(series_id: str, year: int, month: int) -> Optional[float]:
-    """Fetch data for a specific month and year"""
-    try:
-        # Calculate the date range for the specific month
-        start_date = f"{year}-{month:02d}-01"
-        if month == 12:
-            end_date = f"{year + 1}-01-01"
-        else:
-            end_date = f"{year}-{month + 1:02d}-01"
-        
-        params = {
-            "series_id": series_id,
-            "api_key": FRED_API_KEY,
-            "file_type": "json",
-            "observation_start": start_date,
-            "observation_end": end_date,
-            "sort_order": "desc",
-            "limit": 1
-        }
-        
-        async with httpx.AsyncClient() as client:
-            response = await client.get(BASE_URL, params=params)
-            response.raise_for_status()
-            data = response.json()
-        
-        if data and "observations" in data and len(data["observations"]) > 0:
-            obs = data["observations"][0]
-            if obs["value"] != ".":
-                return float(obs["value"])
-        
-        return None
-    except Exception as e:
-        logger.error(f"Failed to fetch data for {series_id} in {year}-{month:02d}: {e}")
-        return None
-
-async def get_fred_data_and_update_database_6m() -> Optional[Dict[str, Any]]:
-    """Fetch FRED data and update the database for 6M model"""
-    try:
-        # Step 1: Fetch all latest observations from FRED API
-        fred_data = await fetch_all_fred_data_6m()
-        if not fred_data:
-            raise RuntimeError("Failed to fetch data from FRED API for 6M")
-        
-        # Step 2: Insert new data into database
-        if not insert_fred_data_to_database_6m(fred_data):
-            logger.warning("Failed to insert new data into database for 6M, continuing with prediction")
-        
-        return fred_data
-    except Exception as e:
-        logger.error(f"Failed to fetch FRED data and update database for 6M: {e}")
-        return None
-
-def insert_fred_data_to_database_6m(fred_data: Dict[str, Any]) -> bool:
-    """Insert new FRED data into the database for 6M model"""
+def insert_fred_data_to_database(fred_data: Dict[str, Any]) -> bool:
+    """Insert new FRED data into the database"""
     try:
         # Prepare data for insertion
         observation_date = None
@@ -339,7 +198,7 @@ def insert_fred_data_to_database_6m(fred_data: Dict[str, Any]) -> bool:
                     # Recession should be integer (0 or 1)
                     new_row[name] = int(float(data["value"]))
                 else:
-                    # All other fields are DECIMAL/FLOAT
+                    # All other fields are DECIMAL
                     new_row[name] = float(data["value"])
             else:
                 # Handle missing values with proper data types
@@ -347,13 +206,13 @@ def insert_fred_data_to_database_6m(fred_data: Dict[str, Any]) -> bool:
                     new_row[name] = 0  # Integer 0 for recession
                 else:
                     new_row[name] = 0.0  # Float 0.0 for DECIMAL fields
-                logger.warning(f"Missing value for 6M {name}, using default")
+                logger.warning(f"Missing value for {name}, using default")
         
         if observation_date:
             new_row["observation_date"] = observation_date
             
             # Log the data being inserted for debugging
-            logger.info(f"Inserting 6M data: {new_row}")
+            logger.info(f"Inserting data: {new_row}")
             
             # Insert into database
             response = db_service.supabase.table('historical_data_6m')\
@@ -361,21 +220,21 @@ def insert_fred_data_to_database_6m(fred_data: Dict[str, Any]) -> bool:
                 .execute()
             
             if response.data:
-                logger.info(f"Successfully inserted new 6M data for {observation_date}")
+                logger.info(f"Successfully inserted new data for {observation_date}")
                 return True
             else:
-                logger.error(f"Failed to insert 6M data: {response}")
+                logger.error(f"Failed to insert data: {response}")
                 return False
         else:
-            logger.error("No valid observation date found in FRED data for 6M")
+            logger.error("No valid observation date found in FRED data")
             return False
             
     except Exception as e:
-        logger.error(f"Failed to insert FRED data into database for 6M: {e}")
+        logger.error(f"Failed to insert FRED data into database: {type(e).__name__}: {str(e)}")
         return False
 
 def get_latest_database_row_6m() -> Optional[Dict[str, Any]]:
-    """Get the latest row from the database for 6M"""
+    """Get the latest row from the database"""
     try:
         response = db_service.supabase.table('historical_data_6m')\
             .select("*")\
@@ -387,7 +246,7 @@ def get_latest_database_row_6m() -> Optional[Dict[str, Any]]:
             return response.data[0]
         return None
     except Exception as e:
-        logger.error(f"Failed to get latest database row for 6M: {e}")
+        logger.error(f"Failed to get latest database row: {type(e).__name__}: {str(e)}")
         return None
 
 def convert_to_input_features_6m(data_row: Dict[str, Any]) -> InputFeatures6M:
@@ -415,26 +274,35 @@ def convert_to_input_features_6m(data_row: Dict[str, Any]) -> InputFeatures6M:
         
         current_data = CurrentMonthData6M(
             observation_date=obs_date,
-            PSTAX=safe_float(data_row.get("PSTAX")),
-            USWTRADE=safe_float(data_row.get("USWTRADE")),
-            MANEMP=safe_float(data_row.get("MANEMP")),
-            CPIAPP=safe_float(data_row.get("CPIAPP")),
-            CSUSHPISA=safe_float(data_row.get("CSUSHPISA")),
-            ICSA=safe_float(data_row.get("ICSA")),
             fedfunds=safe_float(data_row.get("fedfunds")),
-            BBKMLEIX=safe_float(data_row.get("BBKMLEIX")),
             TB3MS=safe_float(data_row.get("TB3MS")),
-            USINFO=safe_float(data_row.get("USINFO")),
-            PPIACO=safe_float(data_row.get("PPIACO")),
-            CPIMEDICARE=safe_float(data_row.get("CPIMEDICARE")),
-            UNEMPLOY=safe_float(data_row.get("UNEMPLOY")),
+            TB6MS=safe_float(data_row.get("TB6MS")),
             TB1YR=safe_float(data_row.get("TB1YR")),
+            USTPU=safe_float(data_row.get("USTPU")),
             USGOOD=safe_float(data_row.get("USGOOD")),
-            CPIFOOD=safe_float(data_row.get("CPIFOOD")),
-            UMCSENT=safe_float(data_row.get("UMCSENT")),
             SRVPRD=safe_float(data_row.get("SRVPRD")),
+            USCONS=safe_float(data_row.get("USCONS")),
+            MANEMP=safe_float(data_row.get("MANEMP")),
+            USWTRADE=safe_float(data_row.get("USWTRADE")),
+            USTRADE=safe_float(data_row.get("USTRADE")),
+            USINFO=safe_float(data_row.get("USINFO")),
+            UNRATE=safe_float(data_row.get("UNRATE")),
+            UNEMPLOY=safe_float(data_row.get("UNEMPLOY")),
+            CPIFOOD=safe_float(data_row.get("CPIFOOD")),
+            CPIMEDICARE=safe_float(data_row.get("CPIMEDICARE")),
+            CPIRENT=safe_float(data_row.get("CPIRENT")),
+            CPIAPP=safe_float(data_row.get("CPIAPP")),
             GDP=safe_float(data_row.get("GDP")),
-            INDPRO=safe_float(data_row.get("INDPRO")),
+            REALGDP=safe_float(data_row.get("REALGDP")),
+            PCEPI=safe_float(data_row.get("PCEPI")),
+            PSAVERT=safe_float(data_row.get("PSAVERT")),
+            PSTAX=safe_float(data_row.get("PSTAX")),
+            COMREAL=safe_float(data_row.get("COMREAL")),
+            COMLOAN=safe_float(data_row.get("COMLOAN")),
+            SECURITYBANK=safe_float(data_row.get("SECURITYBANK")),
+            PPIACO=safe_float(data_row.get("PPIACO")),
+            M1SL=safe_float(data_row.get("M1SL")),
+            M2SL=safe_float(data_row.get("M2SL")),
             recession=safe_int(data_row.get("recession"))
         )
         
@@ -444,53 +312,95 @@ def convert_to_input_features_6m(data_row: Dict[str, Any]) -> InputFeatures6M:
             historical_data_source="database"
         )
     except Exception as e:
-        logger.error(f"Failed to convert data to InputFeatures6M: {e}")
+        logger.error(f"Failed to convert data to InputFeatures6M: {type(e).__name__}: {str(e)}")
         raise
 
 async def get_latest_prediction_6m() -> ForecastResponse6M:
     """
-    Main function that handles the complete flow for 6M:
+    Main function that handles the complete flow:
     1. Check FRED for latest date
     2. Compare with database
-    3. Fetch data accordingly (including weekly series averaging)
+    3. Fetch data accordingly
     4. Make prediction
     """
     try:
+        logger.info("Starting 6M prediction process")
+        
         # Initialize service if needed
         if not initialize_6m_service():
             raise RuntimeError("Failed to initialize 6M forecasting service")
         
         # Step 1: Get latest date from FRED
-        fred_latest_date = await get_fred_latest_date_6m()
+        logger.info("Step 1: Getting latest FRED date")
+        fred_latest_date = await get_fred_latest_date()
         if not fred_latest_date:
-            raise RuntimeError("Could not fetch latest date from FRED API for 6M")
+            # Fallback to database if FRED fails
+            logger.warning("Could not fetch latest date from FRED API, using database fallback")
+            db_latest_date = get_database_latest_date()
+            if not db_latest_date:
+                raise RuntimeError("Could not fetch date from FRED or database")
+            
+            # Use database data as fallback
+            logger.info("Using database data as fallback due to FRED API failure")
+            latest_row = get_latest_database_row_6m()
+            if not latest_row:
+                raise RuntimeError("Failed to get latest row from database")
+            
+            features = convert_to_input_features_6m(latest_row)
+            prediction_result = predict_6m(features)
+            
+            # Add metadata
+            prediction_result.feature_importance = {
+                "data_source": "database_fallback",
+                "fred_date": "unavailable",
+                "db_date": db_latest_date,
+                "note": "Used database fallback due to FRED API failure"
+            }
+            return prediction_result
         
         # Step 2: Get latest date from database
-        db_latest_date = get_database_latest_date_6m()
+        logger.info("Step 2: Getting latest database date")
+        db_latest_date = get_database_latest_date()
         
-        logger.info(f"6M - FRED latest: {fred_latest_date}, DB latest: {db_latest_date}")
+        logger.info(f"FRED latest: {fred_latest_date}, DB latest: {db_latest_date}")
         
         # Step 3: Determine data source and fetch accordingly
         if db_latest_date and fred_latest_date == db_latest_date:
-            # Dates match - use database data
-            logger.info("Using existing database data for 6M")
+            # ✅ OPTIMAL PATH - Use database data (fast, scheduler working correctly)
+            logger.info("✅ Using existing database data (dates match) - scheduler working correctly")
             latest_row = get_latest_database_row_6m()
             if not latest_row:
-                raise RuntimeError("Failed to get latest row from database for 6M")
+                raise RuntimeError("Failed to get latest row from database")
             
             # Convert to input features
             features = convert_to_input_features_6m(latest_row)
             
         else:
-            # Dates don't match or no DB data - fetch from FRED
-            logger.info("Fetching new data from FRED API for 6M (including weekly series averaging)")
-            fred_data = await fetch_all_fred_data_6m()
+            # ⚠️ FALLBACK PATH - Fetch from FRED (slower, scheduler may need attention)
+            logger.warning(f"⚠️ Fetching new data from FRED API - dates don't match (FRED: {fred_latest_date}, DB: {db_latest_date})")
+            logger.info("This suggests the scheduler may not be running or needs attention")
+            fred_data = await fetch_all_fred_data()
             if not fred_data:
-                raise RuntimeError("Failed to fetch data from FRED API for 6M")
+                # Fallback to database if available
+                if db_latest_date:
+                    logger.warning("FRED fetch failed, falling back to database data")
+                    latest_row = get_latest_database_row_6m()
+                    if latest_row:
+                        features = convert_to_input_features_6m(latest_row)
+                        prediction_result = predict_6m(features)
+                        prediction_result.feature_importance = {
+                            "data_source": "database_fallback",
+                            "fred_date": fred_latest_date,
+                            "db_date": db_latest_date,
+                            "note": "Fell back to database due to FRED data fetch failure"
+                        }
+                        return prediction_result
+                        
+                raise RuntimeError("Failed to fetch data from FRED API and no database fallback available")
             
             # Insert new data into database
-            if not insert_fred_data_to_database_6m(fred_data):
-                logger.warning("Failed to insert new data into database for 6M, continuing with prediction")
+            if not insert_fred_data_to_database(fred_data):
+                logger.warning("Failed to insert new data into database, continuing with prediction")
             
             # Convert FRED data to the format we need
             data_row = {}
@@ -516,6 +426,7 @@ async def get_latest_prediction_6m() -> ForecastResponse6M:
             features = convert_to_input_features_6m(data_row)
         
         # Step 4: Make prediction
+        logger.info("Step 4: Making prediction")
         prediction_result = predict_6m(features)
         
         # Add metadata about data source
@@ -530,8 +441,9 @@ async def get_latest_prediction_6m() -> ForecastResponse6M:
                 "db_date": db_latest_date
             }
         
+        logger.info("Successfully completed 6M prediction")
         return prediction_result
         
     except Exception as e:
-        logger.error(f"Failed to get latest prediction for 6M: {e}")
-        raise RuntimeError(f"6M Prediction failed: {e}")
+        logger.error(f"Failed to get latest prediction: {type(e).__name__}: {str(e)}")
+        raise RuntimeError(f"Prediction failed: {e}")

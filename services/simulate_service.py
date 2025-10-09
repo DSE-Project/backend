@@ -18,22 +18,27 @@ from services.database_service import db_service
 logger = logging.getLogger(__name__)
 
 class SimulateService:
+    """
+    Service for managing feature definitions and simulation capabilities.
+    
+    Architecture Note: All models (1m, 3m, 6m) now use the same unified 29-feature dataset
+    with LSTM+Transformer architecture. Previously each model had separate feature tables,
+    but with the unified dataset, only one feature definitions table is needed.
+    """
     def __init__(self):
         self.supported_models = ["1m", "3m", "6m"]
-        self.table_mapping = {
-            "1m": "feature_definitions_1m",
-            "3m": "feature_definitions_3m", 
-            "6m": "feature_definitions_6m"
-        }
+        # Since all models now use the same unified dataset, we only need one feature definitions table
+        self.feature_definitions_table = "feature_definitions_1m"
     
     def get_feature_definitions(self, model_period: str) -> Optional[ModelFeatureDefinitions]:
-        """Get feature definitions for a specific model period"""
+        """Get feature definitions for a specific model period (all models use the same unified dataset)"""
         try:
             if model_period not in self.supported_models:
                 logger.error(f"Unsupported model period: {model_period}")
                 return None
             
-            table_name = self.table_mapping[model_period]
+            # All models use the same unified dataset, so use the same feature definitions table
+            table_name = self.feature_definitions_table
             
             # Query feature definitions from database
             response = db_service.supabase.table(table_name).select("*").order('feature_code').execute()
@@ -61,7 +66,7 @@ class SimulateService:
                 if feature.is_important == 1:
                     important_count += 1
             
-            logger.info(f"✅ Loaded {len(features)} feature definitions for {model_period} model")
+            logger.info(f"✅ Loaded {len(features)} unified feature definitions for {model_period} model")
             
             return ModelFeatureDefinitions(
                 model_period=model_period,
@@ -182,8 +187,8 @@ class SimulateService:
     def test_database_connection(self) -> bool:
         """Test database connection for simulate service"""
         try:
-            # Test connection to at least one feature table
-            response = db_service.supabase.table('feature_definitions_1m').select("feature_code").limit(1).execute()
+            # Test connection to the unified feature definitions table
+            response = db_service.supabase.table(self.feature_definitions_table).select("feature_code").limit(1).execute()
             return len(response.data) > 0
         except Exception as e:
             logger.error(f"❌ Database connection test failed: {e}")

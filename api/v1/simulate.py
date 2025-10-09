@@ -26,6 +26,9 @@ async def get_model_features(
     
     - **model_period**: The model period (1m, 3m, or 6m)
     
+    Note: All models now use the same unified 29-feature dataset, so the feature definitions
+    are identical across all model periods. This endpoint returns the same features for any model.
+    
     Returns feature definitions including name, description, min/max values, and defaults
     """
     if model_period not in ["1m", "3m", "6m"]:
@@ -55,6 +58,9 @@ async def get_model_features(
 async def get_all_features():
     """
     Get feature definitions for all supported model periods
+    
+    Note: All models (1m, 3m, 6m) now use the same unified 29-feature dataset.
+    This endpoint returns the same feature set for all three model periods.
     
     Returns a comprehensive list of all features for 1m, 3m, and 6m models
     """
@@ -117,6 +123,9 @@ async def get_important_features(
     Get only important features for a specific model period
     
     - **model_period**: The model period (1m, 3m, or 6m)
+    
+    Note: All models use the same unified feature set, so important features
+    are the same across all model periods.
     
     Returns only features marked as important (is_important = 1)
     """
@@ -186,6 +195,7 @@ async def health_check():
     Health check endpoint for simulate service
     
     Tests database connectivity and basic functionality
+    Note: All models use unified feature definitions from a single table
     """
     try:
         db_connected = simulate_service.test_database_connection()
@@ -194,6 +204,8 @@ async def health_check():
             "status": "healthy" if db_connected else "unhealthy",
             "database_connected": db_connected,
             "supported_models": simulate_service.supported_models,
+            "feature_table": simulate_service.feature_definitions_table,
+            "unified_dataset": True,
             "timestamp": simulate_service.get_feature_summary()["timestamp"] if db_connected else None
         }
         

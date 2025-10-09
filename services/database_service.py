@@ -38,78 +38,78 @@ class DatabaseService:
         except Exception as e:
             logger.error(f"❌ Failed to initialize Supabase connection: {e}")
             raise
-    #-----------------------------------------------------------------------------------
-    def validate_dataframe(self, df: pd.DataFrame, table_name: str) -> Optional[pd.DataFrame]:
-        """Validate dataframe using Pandera + extra data quality tests + pytest-style printing"""
-        start_time = time.time()  # Track execution time
+    # #-----------------------------------------------------------------------------------
+    # def validate_dataframe(self, df: pd.DataFrame, table_name: str) -> Optional[pd.DataFrame]:
+    #     """Validate dataframe using Pandera + extra data quality tests + pytest-style printing"""
+    #     start_time = time.time()  # Track execution time
         
-        try:
-            # ----- Define schema (basic type & range checks) -----
-            schema = DataFrameSchema({
-                "GDP": Column(float, nullable=False),
-                "fedfunds": Column(float, checks=Check.in_range(0, 20)),
-                "REALGDP": Column(float, nullable=False),
-                "recession": Column(int, checks=Check.isin([0, 1]))
-                # Add more numeric columns and their checks as needed
-            })
+    #     try:
+    #         # ----- Define schema (basic type & range checks) -----
+    #         schema = DataFrameSchema({
+    #             "GDP": Column(float, nullable=False),
+    #             "fedfunds": Column(float, checks=Check.in_range(0, 20)),
+    #             "REALGDP": Column(float, nullable=False),
+    #             "recession": Column(int, checks=Check.isin([0, 1]))
+    #             # Add more numeric columns and their checks as needed
+    #         })
 
-            # Run Pandera validation
-            validated_df = schema.validate(df, lazy=True)
+    #         # Run Pandera validation
+    #         validated_df = schema.validate(df, lazy=True)
 
-            # ----- Extra quality checks -----
-            missing_values = df.isnull().sum()
-            duplicates = df.duplicated().sum()
-            passed, failed = 0, 0
+    #         # ----- Extra quality checks -----
+    #         missing_values = df.isnull().sum()
+    #         duplicates = df.duplicated().sum()
+    #         passed, failed = 0, 0
 
-            print(f"\n{Fore.CYAN}============================= DATA VALIDATION ============================={Style.RESET_ALL}")
-            print(f"Table: {table_name}\n")
+    #         print(f"\n{Fore.CYAN}============================= DATA VALIDATION ============================={Style.RESET_ALL}")
+    #         print(f"Table: {table_name}\n")
 
-            # --- Missing values check for all columns ---
-            missing_columns = missing_values[missing_values > 0].index.tolist()
+    #         # --- Missing values check for all columns ---
+    #         missing_columns = missing_values[missing_values > 0].index.tolist()
 
-            if not missing_columns:
-                print(f"{Fore.GREEN}PASSED:{Style.RESET_ALL} No missing values in any column ✅")
-                passed += 1
-            else:
-                print(f"{Fore.RED}FAILED:{Style.RESET_ALL} Missing values found in columns ❌: {missing_columns}")
-                failed += 1
+    #         if not missing_columns:
+    #             print(f"{Fore.GREEN}PASSED:{Style.RESET_ALL} No missing values in any column ✅")
+    #             passed += 1
+    #         else:
+    #             print(f"{Fore.RED}FAILED:{Style.RESET_ALL} Missing values found in columns ❌: {missing_columns}")
+    #             failed += 1
 
 
-            # --- Duplicate row check ---
-            if duplicates > 0:
-                print(f"{Fore.RED}FAILED:{Style.RESET_ALL} Found {duplicates} duplicate rows ❌")
-                failed += 1
-            else:
-                print(f"{Fore.GREEN}PASSED:{Style.RESET_ALL} No duplicate rows ✅")
-                passed += 1
+    #         # --- Duplicate row check ---
+    #         if duplicates > 0:
+    #             print(f"{Fore.RED}FAILED:{Style.RESET_ALL} Found {duplicates} duplicate rows ❌")
+    #             failed += 1
+    #         else:
+    #             print(f"{Fore.GREEN}PASSED:{Style.RESET_ALL} No duplicate rows ✅")
+    #             passed += 1
 
 
             
-            # --- Summary ---
-            duration = time.time() - start_time
-            print(f"\n{Fore.CYAN}---------------------------- Test Result ----------------------------------{Style.RESET_ALL}")
-            if failed == 0:
-                print(f"{Fore.GREEN}=== {passed} passed, {failed} failed in {duration:.2f}s ==={Style.RESET_ALL}\n")
-            else:
-                print(f"{Fore.RED}=== {passed} passed, {failed} failed in {duration:.2f}s ==={Style.RESET_ALL}\n")
-            print(f"{Fore.CYAN}============================================================================{Style.RESET_ALL}")
+    #         # --- Summary ---
+    #         duration = time.time() - start_time
+    #         print(f"\n{Fore.CYAN}---------------------------- Test Result ----------------------------------{Style.RESET_ALL}")
+    #         if failed == 0:
+    #             print(f"{Fore.GREEN}=== {passed} passed, {failed} failed in {duration:.2f}s ==={Style.RESET_ALL}\n")
+    #         else:
+    #             print(f"{Fore.RED}=== {passed} passed, {failed} failed in {duration:.2f}s ==={Style.RESET_ALL}\n")
+    #         print(f"{Fore.CYAN}============================================================================{Style.RESET_ALL}")
 
-            logger.info(f"✅ Data validation passed for {table_name}")
-            return validated_df
+    #         logger.info(f"✅ Data validation passed for {table_name}")
+    #         return validated_df
 
-        except pa.errors.SchemaErrors as e:
-            duration = time.time() - start_time
-            print(f"\n{Fore.CYAN}============================= DATA VALIDATION ============================={Style.RESET_ALL}")
-            print(f"Table: {table_name}\n")
-            print(f"{Fore.RED}Schema validation FAILED ❌{Style.RESET_ALL}\n")
-            print(e.failure_cases.to_string(index=False))
-            print(f"\n{Fore.RED}=== 0 passed, 1 failed in {duration:.2f}s ==={Style.RESET_ALL}\n")
-            print(f"{Fore.CYAN}============================================================================{Style.RESET_ALL}")
+    #     except pa.errors.SchemaErrors as e:
+    #         duration = time.time() - start_time
+    #         print(f"\n{Fore.CYAN}============================= DATA VALIDATION ============================={Style.RESET_ALL}")
+    #         print(f"Table: {table_name}\n")
+    #         print(f"{Fore.RED}Schema validation FAILED ❌{Style.RESET_ALL}\n")
+    #         print(e.failure_cases.to_string(index=False))
+    #         print(f"\n{Fore.RED}=== 0 passed, 1 failed in {duration:.2f}s ==={Style.RESET_ALL}\n")
+    #         print(f"{Fore.CYAN}============================================================================{Style.RESET_ALL}")
 
-            logger.warning(f"⚠️ Data validation failed for {table_name}")
-            logger.warning(e.failure_cases)
-            return None
-
+    #         logger.warning(f"⚠️ Data validation failed for {table_name}")
+    #         logger.warning(e.failure_cases)
+    #         return None
+    #
     #---------------------------------------------------------------------------------------
     def load_historical_data(self, table_name: str) -> Optional[pd.DataFrame]:
         """Load historical data from Supabase table"""
