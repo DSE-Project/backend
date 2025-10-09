@@ -8,11 +8,13 @@ from services.fred_data_service_6m import get_latest_database_row_6m, convert_to
 from services.explainability_service_1m import get_explanation_1m, explainability_service_1m
 from services.explainability_service_3m import get_explanation_3m, explainability_service_3m
 from services.explainability_service_6m import get_explanation_6m, explainability_service_6m
+from utils.explainability_cache import cache_explainability_response, explainability_cache
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
 @router.get("/explain/1m", response_model=Dict)
+@cache_explainability_response("1m", "explain")
 async def explain_1m_prediction():
     """Get SHAP and ELI5 explanations for 1-month prediction"""
     try:
@@ -36,6 +38,7 @@ async def explain_1m_prediction():
         raise HTTPException(status_code=500, detail=f"Explanation generation failed: {str(e)}")
 
 @router.get("/explain/3m", response_model=Dict)
+@cache_explainability_response("3m", "explain")
 async def explain_3m_prediction():
     """Get SHAP and ELI5 explanations for 3-month prediction"""
     try:
@@ -59,6 +62,7 @@ async def explain_3m_prediction():
         raise HTTPException(status_code=500, detail=f"Explanation generation failed: {str(e)}")
 
 @router.get("/explain/6m", response_model=Dict)
+@cache_explainability_response("6m", "explain")
 async def explain_6m_prediction():
     """Get SHAP and ELI5 explanations for 6-month prediction"""
     try:
@@ -82,6 +86,7 @@ async def explain_6m_prediction():
         raise HTTPException(status_code=500, detail=f"Explanation generation failed: {str(e)}")
 
 @router.get("/explain/all", response_model=Dict)
+@cache_explainability_response("all", "explain")
 async def explain_all_predictions():
     """Get SHAP and ELI5 explanations for all timeframes (1m, 3m, 6m)"""
     try:
@@ -131,3 +136,47 @@ async def clear_explainer_cache():
     except Exception as e:
         logger.error(f"Error clearing explainer cache: {e}")
         raise HTTPException(status_code=500, detail=f"Cache clear failed: {str(e)}")
+
+@router.get("/cache/stats", response_model=Dict)
+async def get_explainability_cache_stats():
+    """Get explainability cache statistics"""
+    try:
+        stats = explainability_cache.get_stats()
+        return {
+            "status": "success",
+            "cache_stats": stats
+        }
+    except Exception as e:
+        logger.error(f"Error getting explainability cache stats: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to get cache stats: {str(e)}")
+
+@router.post("/cache/clear", response_model=Dict)
+async def clear_explainability_cache():
+    """Clear all explainability cache entries"""
+    try:
+        explainability_cache.clear()
+        return {
+            "message": "Explainability cache cleared successfully",
+            "status": "success"
+        }
+    except Exception as e:
+        logger.error(f"Error clearing explainability cache: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to clear cache: {str(e)}")
+
+@router.post("/cache/invalidate/{timeframe}", response_model=Dict)
+async def invalidate_explainability_cache(timeframe: str):
+    """Invalidate cache for a specific timeframe"""
+    try:
+        # Generate cache keys for the timeframe
+        cache_key = explainability_cache.get_explainability_cache_key(timeframe, "explain")
+        invalidated = explainability_cache.invalidate(cache_key)
+        
+        return {
+            "message": f"Cache invalidated for {timeframe}" if invalidated else f"No cache found for {timeframe}",
+            "status": "success",
+            "invalidated": invalidated,
+            "cache_key": cache_key
+        }
+    except Exception as e:
+        logger.error(f"Error invalidating explainability cache for {timeframe}: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to invalidate cache: {str(e)}")
