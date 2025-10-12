@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 
 @router.get("/explain/1m", response_model=Dict)
 async def explain_1m_prediction():
-    """Get SHAP and ELI5 explanations for 1-month prediction"""
+    """Get SHAP and permutation importance explanations for 1-month prediction"""
     try:
         logger.info("🔍 Generating explanations for 1M prediction")
         
@@ -37,7 +37,7 @@ async def explain_1m_prediction():
 
 @router.get("/explain/3m", response_model=Dict)
 async def explain_3m_prediction():
-    """Get SHAP and ELI5 explanations for 3-month prediction"""
+    """Get SHAP and permutation importance explanations for 3-month prediction"""
     try:
         logger.info("🔍 Generating explanations for 3M prediction")
         
@@ -60,7 +60,7 @@ async def explain_3m_prediction():
 
 @router.get("/explain/6m", response_model=Dict)
 async def explain_6m_prediction():
-    """Get SHAP and ELI5 explanations for 6-month prediction"""
+    """Get SHAP and permutation importance explanations for 6-month prediction"""
     try:
         logger.info("🔍 Generating explanations for 6M prediction")
         
@@ -83,7 +83,7 @@ async def explain_6m_prediction():
 
 @router.get("/explain/all", response_model=Dict)
 async def explain_all_predictions():
-    """Get SHAP and ELI5 explanations for all timeframes (1m, 3m, 6m)"""
+    """Get SHAP and permutation importance explanations for all timeframes (1m, 3m, 6m)"""
     try:
         logger.info("🔍 Generating explanations for all predictions")
         

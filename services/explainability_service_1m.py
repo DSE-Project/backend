@@ -13,7 +13,7 @@ from services.forecast_service_1m import (
 from schemas.forecast_schema_1m import InputFeatures1M
 
 class ExplainabilityService1M:
-    """Service for generating model explanations using SHAP and ELI5-style feature importance"""
+    """Service for generating model explanations using SHAP and permutation feature importance"""
     
     def __init__(self):
         self.explainer = None
@@ -170,8 +170,8 @@ class ExplainabilityService1M:
             print(f"❌ Error calculating SHAP values: {e}")
             raise RuntimeError(f"SHAP calculation failed: {e}")
     
-    def get_eli5_feature_importance(self, features: InputFeatures1M, seq_length=12) -> Dict:
-        """Get ELI5-style feature importance using permutation importance approach"""
+    def get_permutation_feature_importance(self, features: InputFeatures1M, seq_length=12) -> Dict:
+        """Get permutation feature importance using sklearn.inspection.permutation_importance"""
         try:
             # Ensure model is loaded
             from services.forecast_service_1m import model_1m
@@ -226,22 +226,22 @@ class ExplainabilityService1M:
             }
             
         except Exception as e:
-            print(f"❌ Error calculating ELI5 feature importance: {e}")
+            print(f"❌ Error calculating permutation feature importance: {e}")
             raise RuntimeError(f"Feature importance calculation failed: {e}")
     
     def get_combined_explanation(self, features: InputFeatures1M, seq_length=12) -> Dict:
-        """Get both SHAP and ELI5 explanations in a combined format"""
+        """Get both SHAP and permutation importance explanations in a combined format"""
         try:
             # Get SHAP values
             shap_result = self.get_shap_values(features, seq_length)
             
-            # Get ELI5 feature importance
-            eli5_result = self.get_eli5_feature_importance(features, seq_length)
+            # Get permutation feature importance
+            permutation_result = self.get_permutation_feature_importance(features, seq_length)
             
             # Combine results
             return {
                 "shap_explanation": shap_result,
-                "eli5_explanation": eli5_result,
+                "permutation_importance": permutation_result,
                 "model_version": "lstm_transformer_1m_v1.0",
                 "explanation_method": "SHAP + Permutation Importance"
             }

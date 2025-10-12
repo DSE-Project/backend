@@ -12,7 +12,7 @@ from services.forecast_service_6m import (
 from schemas.forecast_schema_6m import InputFeatures6M
 
 class ExplainabilityService6M:
-    """Service for generating model explanations using SHAP and ELI5-style feature importance"""
+    """Service for generating model explanations using SHAP and permutation feature importance"""
     
     def __init__(self):
         self.explainer = None
@@ -144,8 +144,8 @@ class ExplainabilityService6M:
             print(f"❌ Error calculating SHAP values (6M): {e}")
             raise RuntimeError(f"SHAP calculation failed: {e}")
     
-    def get_eli5_feature_importance(self, features: InputFeatures6M, seq_length=12) -> Dict:
-        """Get ELI5-style feature importance using permutation importance approach"""
+    def get_permutation_feature_importance(self, features: InputFeatures6M, seq_length=12) -> Dict:
+        """Get permutation feature importance using sklearn.inspection.permutation_importance"""
         try:
             # Ensure model is loaded
             from services.forecast_service_6m import model_6m
@@ -187,18 +187,18 @@ class ExplainabilityService6M:
             }
             
         except Exception as e:
-            print(f"❌ Error calculating ELI5 feature importance (6M): {e}")
+            print(f"❌ Error calculating permutation feature importance (6M): {e}")
             raise RuntimeError(f"Feature importance calculation failed: {e}")
     
     def get_combined_explanation(self, features: InputFeatures6M, seq_length=12) -> Dict:
-        """Get both SHAP and ELI5 explanations in a combined format"""
+        """Get both SHAP and permutation importance explanations in a combined format"""
         try:
             shap_result = self.get_shap_values(features, seq_length)
-            eli5_result = self.get_eli5_feature_importance(features, seq_length)
+            permutation_result = self.get_permutation_feature_importance(features, seq_length)
             
             return {
                 "shap_explanation": shap_result,
-                "eli5_explanation": eli5_result,
+                "permutation_importance": permutation_result,
                 "model_version": "6m_v1.0",
                 "explanation_method": "SHAP + Permutation Importance"
             }
