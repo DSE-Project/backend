@@ -12,21 +12,40 @@ from services.forecast_service_1m import (
 )
 from schemas.forecast_schema_1m import InputFeatures1M
 
+from typing import Dict, List, Tuple
+import numpy as np
+from sklearn.inspection import permutation_importance
+from sklearn.metrics import make_scorer
+from utils.explainability_cache import explainability_cache, CachedExplainerData
+
 class ExplainabilityService1M:
     """Service for generating model explanations using SHAP and permutation feature importance"""
     
     def __init__(self):
-        self.explainer = None
-        self.background_data = None
+        # No longer store instance variables - use global cache instead
+        pass
         
     def clear_explainer_cache(self):
         """Force reinitialization of the SHAP explainer"""
-        self.explainer = None
-        self.background_data = None
-        print("🔄 SHAP explainer cache cleared - will reinitialize on next use")
+        # Clear from global cache instead of instance variables
+        cache_key = explainability_cache.get_cache_key("1m")
+        explainability_cache.delete(cache_key)
+        print("🔄 SHAP explainer cache cleared (1M) - will reinitialize on next use")
         
-    def initialize_explainer(self, seq_length=12, num_background_samples=100):
-        """Initialize SHAP explainer with background data"""
+    def get_or_initialize_explainer(self, seq_length=12, num_background_samples=100):
+        """Get cached explainer or initialize new one"""
+        # Generate cache key
+        cache_key = explainability_cache.get_cache_key("1m", seq_length, num_background_samples)
+        
+        # Try to get from cache first
+        cached_data = explainability_cache.get(cache_key)
+        if cached_data and cached_data.is_valid():
+            print(f"✅ Using cached SHAP explainer (1M)")
+            return cached_data.explainer, cached_data.background_data, cached_data.feature_names
+        
+        # Cache miss - initialize new explainer
+        print(f"🔄 Initializing new SHAP explainer (1M)")
+        
         try:
             # Ensure model is loaded - MUST be called first
             if not initialize_1m_service():
@@ -73,33 +92,37 @@ class ExplainabilityService1M:
             if len(sequences) == 0:
                 raise RuntimeError(f"No sequences created. Data length: {len(X_scaled)}, seq_length: {seq_length}")
             
-            self.background_data = np.array(sequences[:num_background_samples])
-            self.feature_names = feature_cols
+            background_data = np.array(sequences[:num_background_samples])
+            feature_names = feature_cols
             
             # Initialize SHAP explainer with GradientExplainer (most compatible with TensorFlow)
+            explainer = None
             try:
-                self.explainer = shap.GradientExplainer(model_1m, self.background_data)
-                print(f"✅ SHAP GradientExplainer initialized with {len(self.background_data)} background samples")
-                return True
+                explainer = shap.GradientExplainer(model_1m, background_data)
+                print(f"✅ SHAP GradientExplainer initialized with {len(background_data)} background samples")
             except Exception as e:
                 print(f"⚠️  GradientExplainer failed: {e}")
                 print("🔄 Falling back to simpler feature attribution method...")
                 
                 # Simple feature attribution using input gradients
-                self.explainer = "simple_gradients"
+                explainer = "simple_gradients"
                 print(f"✅ Simple gradient attribution initialized")
-                return True
+            
+            # Cache the initialized explainer
+            cached_data = CachedExplainerData(explainer, background_data, feature_names)
+            explainability_cache.set(cache_key, cached_data)
+            
+            return explainer, background_data, feature_names
             
         except Exception as e:
             print(f"❌ Error initializing SHAP explainer: {e}")
-            return False
+            raise RuntimeError(f"Failed to initialize explainer: {e}")
     
     def get_shap_values(self, features: InputFeatures1M, seq_length=12) -> Dict:
         """Calculate SHAP values for the given prediction"""
         try:
-            # Initialize explainer if not done
-            if self.explainer is None:
-                self.initialize_explainer(seq_length=seq_length)
+            # Get cached explainer or initialize new one
+            explainer, background_data, feature_names = self.get_or_initialize_explainer(seq_length=seq_length)
             
             # Get fresh references to the loaded models
             from services.forecast_service_1m import model_1m
@@ -117,7 +140,7 @@ class ExplainabilityService1M:
             latest_sequence = X_scaled[-seq_length:].reshape(1, seq_length, -1)
             
             # Calculate SHAP values using the appropriate method
-            if self.explainer == "simple_gradients":
+            if explainer == "simple_gradients":
                 # Fallback: Simple gradient-based importance calculation
                 import tensorflow as tf
                 with tf.GradientTape() as tape:
@@ -131,7 +154,7 @@ class ExplainabilityService1M:
                 
             else:
                 # Use GradientExplainer
-                shap_values = self.explainer.shap_values(latest_sequence)
+                shap_values = explainer.shap_values(latest_sequence)
                 
                 # Process SHAP values for the sequence
                 if isinstance(shap_values, list):
@@ -162,7 +185,7 @@ class ExplainabilityService1M:
             
             return {
                 "shap_values": top_features,
-                "base_value": float(self.explainer.expected_value) if hasattr(self.explainer, 'expected_value') else 0.5,
+                "base_value": float(explainer.expected_value) if hasattr(explainer, 'expected_value') else 0.5,
                 "feature_count": len(feature_cols)
             }
             
@@ -170,61 +193,99 @@ class ExplainabilityService1M:
             print(f"❌ Error calculating SHAP values: {e}")
             raise RuntimeError(f"SHAP calculation failed: {e}")
     
-    def get_permutation_feature_importance(self, features: InputFeatures1M, seq_length=12) -> Dict:
-        """Get permutation feature importance using sklearn.inspection.permutation_importance"""
+    def get_permutation_feature_importance(self, features: InputFeatures1M, seq_length: int = 12) -> Dict:
+        """
+        Get permutation feature importance focusing on the last time step of each sequence,
+        using sklearn.inspection.permutation_importance, with n_jobs=1 to avoid pickling issues.
+        Optimized for faster execution by limiting the number of windows and repeats.
+        """
         try:
-            # Ensure model is loaded
+            # 1) ensure model is loaded
             from services.forecast_service_1m import model_1m
-            
             if model_1m is None:
                 raise RuntimeError("Model not loaded")
-            
-            # Preprocess features
+
+            # 2) preprocess -> X_scaled: shape (T, F)
             X_scaled, feature_cols, df = preprocess_features_1m(features)
+            T, F = X_scaled.shape
+            if T < seq_length:
+                raise RuntimeError("Insufficient data for feature importance analysis")
+
+            # 3) build rolling windows of length seq_length - OPTIMIZED: limit to recent windows
+            max_windows = min(50, T - seq_length + 1)  # Limit to 50 most recent windows for performance
+            start_idx = max(0, T - seq_length - max_windows + 1)
+            N = min(max_windows, T - seq_length + 1)
             
-            if len(X_scaled) < seq_length:
-                raise RuntimeError(f'Insufficient data for feature importance analysis')
-            
-            # Get the latest sequence
-            latest_sequence = X_scaled[-seq_length:].reshape(1, seq_length, -1)
-            
-            # Get baseline prediction
-            baseline_pred = model_1m.predict(latest_sequence, verbose=0)[0][0]
-            
-            # Calculate feature importance through perturbation
+            windows = np.stack([X_scaled[start_idx + i:start_idx + i + seq_length] for i in range(N)], axis=0)  # (N, L, F)
+            last_steps = windows[:, -1, :]
+            frozen_prefix = windows[:, :-1, :]
+
+            # 4) sklearn-compatible estimator that only takes last-step features
+            class _LastStepEstimator:
+                def __init__(self, base_model, frozen_prefix):
+                    self.base_model = base_model
+                    self.frozen_prefix = frozen_prefix  # (N, L-1, F)
+
+                def fit(self, X, y=None):
+                    return self
+
+                def predict(self, X):
+                    N_local = X.shape[0]
+                    seq = np.concatenate([self.frozen_prefix, X.reshape(N_local, 1, -1)], axis=1)
+                    preds = self.base_model.predict(seq, verbose=0).reshape(-1)
+                    return preds
+
+            estimator = _LastStepEstimator(model_1m, frozen_prefix)
+
+            # 5) baseline predictions (treated as "y" for stability scorer)
+            y_hat = estimator.predict(last_steps)
+
+            # 6) scorer: negative MAE vs baseline predictions (higher is better)
+            def _neg_mae(y_true, y_pred):
+                return -float(np.mean(np.abs(y_pred - y_true)))
+
+            scorer = make_scorer(_neg_mae, greater_is_better=True)
+
+            # 7) permutation importance (single-process to avoid pickling) - OPTIMIZED: fewer repeats
+            result = permutation_importance(
+                estimator=estimator,
+                X=last_steps,
+                y=y_hat,
+                scoring=scorer,
+                n_repeats=5,  # Reduced from 20 to 5 for faster execution
+                random_state=0,
+                n_jobs=1,  # avoid pickling Keras & local classes
+            )
+
+            importances_mean = np.abs(result.importances_mean)
+            importances_std = result.importances_std
+
+            # Latest window headline prediction (nice to report)
+            latest_sequence = X_scaled[-seq_length:]
+            latest_pred = float(model_1m.predict(latest_sequence.reshape(1, seq_length, F), verbose=0)[0][0])
+            latest_last_step = latest_sequence[-1]
+
             feature_importance = []
-            
-            # Only perturb the last time step (most recent data)
-            for idx, feature_name in enumerate(feature_cols):
-                perturbed_sequence = latest_sequence.copy()
-                
-                # Perturb feature at last time step with mean value
-                mean_value = np.mean(latest_sequence[0, :, idx])
-                perturbed_sequence[0, -1, idx] = mean_value
-                
-                # Get perturbed prediction
-                perturbed_pred = model_1m.predict(perturbed_sequence, verbose=0)[0][0]
-                
-                # Calculate importance as absolute difference
-                importance = abs(baseline_pred - perturbed_pred)
-                
+            for idx, fname in enumerate(feature_cols):
                 feature_importance.append({
-                    "feature": feature_name,
-                    "importance": float(importance),
-                    "current_value": float(latest_sequence[0, -1, idx]),
-                    "baseline_prediction": float(baseline_pred)
+                    "feature": fname,
+                    "importance": float(importances_mean[idx]),
+                    "importance_std": float(importances_std[idx]),
+                    "current_value": float(latest_last_step[idx]),
+                    "baseline_prediction": latest_pred
                 })
-            
-            # Sort by importance
-            feature_importance.sort(key=lambda x: x['importance'], reverse=True)
-            
-            # Return top 10
+
+            feature_importance.sort(key=lambda x: x["importance"], reverse=True)
+
             return {
                 "feature_importance": feature_importance[:10],
-                "baseline_prediction": float(baseline_pred),
-                "total_features": len(feature_cols)
+                "baseline_prediction": latest_pred,
+                "total_features": len(feature_cols),
+                "n_windows": int(N),
+                "seq_length": int(seq_length),
+                "note": "Optimized: Limited to 50 recent windows, 5 repeats for faster execution. Permutation permutes only last time-step features."
             }
-            
+
         except Exception as e:
             print(f"❌ Error calculating permutation feature importance: {e}")
             raise RuntimeError(f"Feature importance calculation failed: {e}")
