@@ -17,7 +17,7 @@ dependencies = [
     "colorama==0.4.6",
     "dnspython==2.7.0",
     "email-validator==2.3.0",
-    "fastapi==0.116.1",
+    "fastapi[standard]==0.116.1",
     "fastapi-cli==0.0.10",
     "fastapi-cloud-cli==0.1.5",
     "flatbuffers==25.2.10",
@@ -99,6 +99,7 @@ dependencies = [
     "pytest-asyncio>=0.21.0",
     "pytest-mock>=3.10.0",
     "httpx>=0.24.0",
+    "pandera>=0.26.1",
 ]
 
 [tool.pytest.ini_options]
