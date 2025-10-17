@@ -20,7 +20,7 @@ def fix_wkhtmltopdf_path():
         content = f.read()
     
     # Replace Windows path with Linux path
-    old_path = 'wkhtmltopdf_path = "C:\\\\Program Files\\\\wkhtmltopdf\\\\bin\\\\wkhtmltopdf.exe"'
+    old_path = 'wkhtmltopdf_path = "C:\\Program Files\\wkhtmltopdf\\bin\\wkhtmltopdf.exe"'
     new_path = 'wkhtmltopdf_path = "/usr/bin/wkhtmltopdf"'
     
     if old_path in content:
