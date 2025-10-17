@@ -5,7 +5,7 @@ set -e
 
 echo "🔄 Updating RecessionScope Backend..."
 
-cd /var/www/recessionscope
+cd /var/www/recessionscope/backend
 
 echo "📥 Pulling latest changes..."
 git pull origin main  # or your branch name

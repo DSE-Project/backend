@@ -15,6 +15,8 @@ fi
 # Check if we're in the right directory
 if [ ! -f "main.py" ]; then
     echo "❌ main.py not found. Please run this script from the backend directory"
+    echo "Current directory: $(pwd)"
+    echo "Expected files: main.py, requirements.txt"
     exit 1
 fi
 
