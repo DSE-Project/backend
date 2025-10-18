@@ -80,7 +80,8 @@ app.add_middleware(
         "https://localhost:5173",
         "http://127.0.0.1:5173",
         "https://127.0.0.1:5173",
-        "https://recession-scope.vercel.app"
+        "https://recession-scope.vercel.app",
+        "https://recessionscope.duckdns.org"
     ],
     allow_credentials=True,
     allow_methods=["*"],
