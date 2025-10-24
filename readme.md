@@ -1,208 +1,344 @@
-# RecessionScope API
+# RecessionScope 📈
 
-A FastAPI-based REST API for predicting US recession probabilities using machine learning models. The system provides 1-month, 3-month, and 6-month recession probability forecasts.
+A comprehensive US Recession Forecasting System that provides 1, 3, and 6-month recession probability predictions using advanced machine learning models.
 
-## Features
+## 🌐 Live Demo
 
-- **Multiple Time Horizons**: Get recession probability predictions for 1, 3, and 6 months
-- **Machine Learning Models**: Powered by LSTM neural networks trained on economic indicators
-- **RESTful API**: Clean and well-documented endpoints
-- **Interactive Documentation**: Built-in Swagger UI and ReDoc documentation
-- **CORS Support**: Ready for frontend integration
+Visit the live application: **[https://recession-scope.vercel.app/](https://recession-scope.vercel.app/)**
 
-## Installation
+## 📋 Prerequisites
 
-### Prerequisites
+Before getting started, ensure you have the following installed on your system:
 
-- Python 3.8 or higher
-- uv package manager
+- **Python 3.12+** (for backend)
+- **Node.js 18+** and **npm** (for frontend)
+- **Git** (for cloning repositories)
+- **wkhtmltopdf** (for PDF generation)
 
-### Setup
+## 🚀 Quick Setup Guide
 
-1. **Install uv** (if not already installed):
-   
-   **Windows:**
-   ```bash
-   # Using PowerShell
-   powershell -c "irm https://astral.sh/uv/install.ps1 | iex"
-   
-   # Or using pip
-   pip install uv
-   ```
-   
-   **macOS:**
-   ```bash
-   # Using Homebrew
-   brew install uv
-   
-   # Or using curl
-   curl -LsSf https://astral.sh/uv/install.sh | sh
-   ```
-   
-   **Linux:**
-   ```bash
-   curl -LsSf https://astral.sh/uv/install.sh | sh
-   ```
+### 1. Clone the Repositories
 
-2. **Clone the repository** (if not already done):
+```bash
+# Clone the backend repository
+git clone https://github.com/DSE-Project/backend.git
+
+# Clone the frontend repository  
+git clone https://github.com/DSE-Project/frontend.git
+```
+
+### 2. Project Structure
+After cloning, your directory structure should look like:
+```
+RecessionScope/
+├── backend/
+└── frontend/
+```
+
+---
+
+## 🔧 Backend Setup
+
+### Step 1: Navigate to Backend Directory
+```bash
+cd backend
+```
+
+### Step 2: Create Environment Configuration
+
+Create a `.env` file in the backend directory with the following variables:
+
+```env
+# Supabase Configuration (Contact developers for these values)
+SUPABASE_URL=your_supabase_project_url
+SUPABASE_ANON_KEY=your_supabase_anon_key
+
+# API Keys (Get your own)
+GROQ_API_KEY=your_groq_api_key
+FRED_API_KEY=your_fred_api_key
+
+# PDF Generation
+WKHTMLTOPDF_PATH=path_to_your_wkhtmltopdf_executable
+```
+
+#### Environment Variables Explained:
+
+- **SUPABASE_URL & SUPABASE_ANON_KEY**: Database credentials for Supabase
+  - 📧 **Contact us** to get these credentials
+  
+- **GROQ_API_KEY**: For AI/ML processing
+  - Get your free API key from [Groq Console](https://console.groq.com/)
+  
+- **FRED_API_KEY**: For Federal Reserve Economic Data
+  - Get your free API key: [FRED API Key Registration](https://fred.stlouisfed.org/docs/api/api_key.html)
+  
+- **WKHTMLTOPDF_PATH**: Path to wkhtmltopdf executable for PDF generation
+
+### Step 3: Install wkhtmltopdf
+
+Download and install wkhtmltopdf from: **[https://wkhtmltopdf.org/downloads.html](https://wkhtmltopdf.org/downloads.html)**
+
+After installation, add the executable path to your `.env` file:
+
+**Windows:**
+```env
+WKHTMLTOPDF_PATH="C:\Program Files\wkhtmltopdf\bin\wkhtmltopdf.exe"
+```
+
+**Linux:**
+```env
+WKHTMLTOPDF_PATH="/usr/local/bin/wkhtmltopdf"
+```
+
+**macOS:**
+```env
+WKHTMLTOPDF_PATH="/usr/local/bin/wkhtmltopdf"
+```
+
+### Step 4: Install Dependencies
+
+#### Option A: Using UV Package Manager (Recommended)
+
+UV is a fast Python package manager. Install it first:
+
+**Windows:**
+```powershell
+# Using pip
+pip install uv
+
+# Or using winget
+winget install astral-sh.uv
+```
+
+**macOS:**
+```bash
+# Using Homebrew
+brew install uv
+
+# Or using pip
+pip install uv
+```
+
+**Linux:**
+```bash
+# Using pip
+pip install uv
+
+# Or using curl
+curl -LsSf https://astral.sh/uv/install.sh | sh
+```
+
+Then sync dependencies:
+```bash
+uv sync
+```
+
+#### Option B: Using Traditional pip
+
+```bash
+# Create virtual environment
+python -m venv venv
+
+# Install dependencies
+pip install -r requirements.txt
+```
+
+### Step 5: Activate Virtual Environment
+
+**Windows (Command Prompt/PowerShell):**
+```powershell
+# If using uv
+.venv\Scripts\activate
+
+# If using traditional venv
+venv\Scripts\activate
+```
+
+**Unix-based (Linux/macOS):**
+```bash
+# If using uv
+source .venv/bin/activate
+
+# If using traditional venv
+source venv/bin/activate
+```
+
+### Step 6: Run the Backend Server
+
+```bash
+# Using uvicorn directly
+uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+
+# Or using the Python script
+python main.py
+```
+
+**Backend will be available at:** `http://127.0.0.1:8000`
+
+**API Documentation:** `http://127.0.0.1:8000/docs`
+
+---
+
+## 🎨 Frontend Setup
+
+### Step 1: Navigate to Frontend Directory
+```bash
+cd frontend
+```
+
+### Step 2: Create Environment Configuration
+
+Create a `.env` file in the frontend directory:
+
+```env
+# API Configuration
+VITE_API_BASE_URL=http://127.0.0.1:8000/api/v1
+
+# Supabase Configuration (Same as backend - contact developers)
+VITE_SUPABASE_URL=your_supabase_project_url
+VITE_SUPABASE_ANON_KEY=your_supabase_anon_key
+
+# Frontend URL
+VITE_FRONTEND_URL=http://localhost:5173
+```
+
+#### Environment Variables Explained:
+
+- **VITE_API_BASE_URL**: Backend API endpoint
+  - Local development: `http://127.0.0.1:8000/api/v1`
+  - Production backend: `https://recessionscope.duckdns.org/api/v1`
+  
+- **VITE_SUPABASE_URL & VITE_SUPABASE_ANON_KEY**: Same as backend credentials
+  - 📧 **Contact us** to get these credentials
+  
+- **VITE_FRONTEND_URL**: Frontend application URL
+  - Local development: `http://localhost:5173`
+
+### Step 3: Install Dependencies
+
+```bash
+npm install
+```
+
+### Step 4: Run the Frontend Server
+
+```bash
+# Development server
+npm run dev
+
+# Build for production
+npm run build
+
+# Preview production build
+npm run preview
+```
+
+**Frontend will be available at:** `http://localhost:5173`
+
+---
+
+## 🔄 Full Development Workflow
+
+1. **Start Backend Server:**
    ```bash
    cd backend
+   source .venv/bin/activate  # or .venv\Scripts\activate on Windows
+   uvicorn main:app --host 0.0.0.0 --port 8000 --reload
    ```
 
-3. **Create and activate a virtual environment with dependencies**:
+2. **Start Frontend Server (in another terminal):**
    ```bash
-   uv sync
-   ```
-   
-   This command will automatically:
-   - Create a virtual environment
-   - Install all dependencies from `uv.lock`
-   - Activate the environment
-
-   Alternatively, you can manually create and activate a virtual environment:
-   ```bash
-   uv venv
-   ```
-   
-   **Windows:**
-   ```bash
-   .venv\Scripts\activate
-   ```
-   
-   **macOS/Linux:**
-   ```bash
-   source .venv/bin/activate
+   cd frontend
+   npm run dev
    ```
 
-4. **Install dependencies** (if not using `uv sync`):
-   ```bash
-   uv pip install -r requirements.txt
-   ```
+3. **Access Application:**
+   - Frontend: `http://localhost:5173`
+   - Backend API: `http://127.0.0.1:8000`
+   - API Docs: `http://127.0.0.1:8000/docs`
 
-## Running the Server
+---
 
-### Development Mode
+## 📁 Project Architecture
 
-To run the server in development mode with auto-reload:
-
-```bash
-uv run fastapi dev main.py
-```
-
-The server will start on `http://localhost:8000`
-
-### Production Mode
-
-To run the server in production mode:
-
-```bash
-uv run python main.py
-```
-
-Or using uvicorn directly:
-
-```bash
-uv run uvicorn main:app --host 0.0.0.0 --port 8000
-```
-
-## API Documentation
-
-Once the server is running, you can access:
-
-- **Interactive API Documentation (Swagger UI)**: http://localhost:8000/docs
-- **Alternative Documentation (ReDoc)**: http://localhost:8000/redoc
-
-## API Endpoints
-
-### Main Endpoints
-
-- `POST /api/v1/forecast/predict/all` - Get predictions from all models (1m, 3m, 6m)
-- `POST /api/v1/forecast/predict/1m` - Get 1-month recession probability
-- `POST /api/v1/forecast/predict/3m` - Get 3-month recession probability  
-- `POST /api/v1/forecast/predict/6m` - Get 6-month recession probability
-
-### Utility Endpoints
-
-- `GET /` - Welcome message and API information
-- `GET /health` - Health check endpoint
-
-## Project Structure
-
+### Backend Structure
 ```
 backend/
-├── main.py                 # FastAPI application entry point
-├── requirements.txt        # Python dependencies
-├── pyproject.toml          # Project configuration for uv
-├── uv.lock                 # Locked dependency versions
-├── api/
-│   └── v1/
-│       └── forecast.py     # API route definitions
-├── services/               # Business logic and model services
-├── schemas/                # Pydantic data models
-├── ml_models/              # Trained machine learning models
-└── notebooks/              # Jupyter notebooks for data analysis
+├── api/v1/              # API endpoints
+├── services/            # Business logic services
+├── models/              # ML models (1m, 3m, 6m)
+├── schemas/             # Data validation schemas
+├── utils/               # Utility functions
+├── config/              # Configuration files
+└── middleware/          # Custom middleware
 ```
 
-## Development
+### Frontend Structure
+```
+frontend/
+├── src/
+│   ├── components/      # Reusable UI components
+│   ├── pages/          # Page components
+│   ├── api/            # API service functions
+│   ├── contexts/       # React contexts
+│   ├── hooks/          # Custom React hooks
+│   └── utils/          # Utility functions
+└── public/             # Static assets
+```
 
-### Adding New Features
+---
 
-1. **Models**: Add new model files to `ml_models/`
-2. **Schemas**: Define input/output data structures in `schemas/`
-3. **Services**: Implement business logic in `services/`
-4. **Routes**: Add API endpoints in `api/v1/`
+## 🛠️ Troubleshooting
 
-### Testing
+### Common Issues:
 
-Run the development server and test endpoints using the interactive documentation at `/docs`.
+1. **Backend won't start:**
+   - Check if Python 3.12+ is installed
+   - Verify all environment variables are set
+   - Ensure wkhtmltopdf is properly installed
+   - Check if port 8000 is available
 
-## Environment Variables
+2. **Frontend won't start:**
+   - Verify Node.js 18+ and npm are installed
+   - Check if port 5173 is available
+   - Ensure environment variables are correctly set
 
-You can configure the following environment variables:
+3. **API connection issues:**
+   - Verify backend is running on `http://127.0.0.1:8000`
+   - Check `VITE_API_BASE_URL` in frontend `.env`
+   - Disable firewall/antivirus temporarily for testing
 
-- `DEBUG`: Set to `false` for production mode (default: `true`)
-- `ALLOWED_ORIGINS`: Comma-separated list of allowed CORS origins (default: `*`)
+4. **PDF Generation not working:**
+   - Verify wkhtmltopdf installation
+   - Check `WKHTMLTOPDF_PATH` in backend `.env`
+   - Ensure the path exists and is executable
 
-## Troubleshooting
+### Getting Help:
 
-### Common Issues
+- 📧 **Contact developers** for Supabase credentials
+- 🐛 **Report issues** on the respective GitHub repositories
+- 📖 **Check API documentation** at `http://127.0.0.1:8000/docs`
 
-1. **Module Import Errors**: Make sure you're running commands from the `backend` directory
-2. **Missing Dependencies**: Run `uv sync` or `uv pip install -r requirements.txt` again
-3. **Port Already in Use**: Change the port in `main.py` or kill the process using port 8000
+---
 
-### Model Loading Issues
+## 🔗 Additional Resources
 
-If you encounter model loading errors:
-- Ensure model files exist in the `ml_models/` directory
-- Check that model files are in the correct format (.keras)
-- Verify TensorFlow compatibility
+- [FastAPI Documentation](https://fastapi.tiangolo.com/)
+- [React Documentation](https://react.dev/)
+- [Vite Documentation](https://vitejs.dev/)
+- [Tailwind CSS Documentation](https://tailwindcss.com/)
+- [Supabase Documentation](https://supabase.com/docs)
 
-## Package Management with uv
+---
 
-This project uses [uv](https://github.com/astral-sh/uv) as the package manager for faster and more reliable dependency management. Key benefits:
+## 📄 License
 
-- **Speed**: 10-100x faster than pip for installation and resolution
-- **Reliability**: Deterministic dependency resolution with lock files
-- **Compatibility**: Drop-in replacement for pip with additional features
+This project is licensed under the MIT License. See the LICENSE file for details.
 
-### Common uv Commands
+---
 
-- `uv sync` - Install dependencies from lock file (recommended)
-- `uv add <package>` - Add a new dependency
-- `uv remove <package>` - Remove a dependency
-- `uv pip install <package>` - Install packages (pip-compatible)
-- `uv run <command>` - Run commands in the virtual environment
-- `uv lock` - Update the lock file with current dependencies
+## 👥 Contributors
 
-## Contributing
+Developed by the DSEP Group 18.
 
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Test thoroughly
-5. Submit a pull request
-
-## License
-
-This project is licensed under the MIT License.
+**Need help?** Contact us for Supabase credentials and additional support!
